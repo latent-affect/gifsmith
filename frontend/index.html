@@ -1,0 +1,1540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GIFsmith — video → meme GIF</title>
+<style>
+  /* Anton (SIL OFL 1.1) is loaded from fonts/ if scripts/fetch-fonts.sh has
+     been run; otherwise the stack falls back to locally installed Impact /
+     Arial Black. We never bundle Impact (not redistributable). */
+  @font-face {
+    font-family: "Anton";
+    src: local("Anton"), url("fonts/Anton-Regular.ttf") format("truetype");
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "Oswald";
+    src: local("Oswald"), url("fonts/Oswald-SemiBold.woff2") format("woff2");
+    font-weight: 600;
+    font-display: swap;
+  }
+  :root {
+    --bg: #14161a; --panel: #1e2128; --panel2: #262a33; --text: #e8eaee;
+    --muted: #9aa1ad; --accent: #4da3ff; --warn: #ffb02e; --err: #ff5d5d;
+    --ok: #43c17a; --border: #333845;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 14px 22px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 20px; margin: 0; letter-spacing: .5px; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  #serverBox { margin-left: auto; font-size: 13px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
+  #serverUrl { width: 190px; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 13px; }
+  #serverDot { width: 9px; height: 9px; border-radius: 50%; background: var(--err); display: inline-block; }
+  #serverDot.ok { background: var(--ok); }
+  main { display: grid; grid-template-columns: minmax(340px, 1fr) 360px; gap: 18px; padding: 18px 22px; max-width: 1280px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .panel h2 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+  #stage { position: relative; background: #000; border-radius: 8px; overflow: hidden; min-height: 200px; display: flex; align-items: center; justify-content: center; }
+  #stage video { display: none; }
+  #previewCanvas { max-width: 100%; height: auto; display: block; }
+  #dropHint { color: var(--muted); padding: 48px 20px; text-align: center; }
+  .row { display: flex; gap: 10px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+  .row label { min-width: 96px; color: var(--muted); font-size: 13px; }
+  input[type=number], select, input[type=text] {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; font-size: 14px; width: 110px;
+  }
+  select { width: 130px; }
+  input[type=range] { flex: 1; min-width: 110px; }
+  input[type=file] { color: var(--muted); font-size: 13px; max-width: 240px; }
+  button {
+    background: var(--accent); border: 0; color: #0b1220; font-weight: 600;
+    padding: 9px 16px; border-radius: 8px; cursor: pointer; font-size: 14px;
+  }
+  button.secondary { background: var(--panel2); color: var(--text); border: 1px solid var(--border); }
+  button:disabled { opacity: .45; cursor: default; }
+  .small { font-size: 12px; color: var(--muted); }
+  #cueList { max-height: 230px; overflow-y: auto; margin-top: 8px; }
+  .cue { display: flex; gap: 8px; align-items: center; padding: 5px 6px; border-radius: 6px; }
+  .cue:nth-child(odd) { background: var(--panel2); }
+  .cue .t { font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--muted); white-space: nowrap; cursor: pointer; }
+  .cue input[type=text] { flex: 1; width: auto; font-size: 13px; }
+  .cue input[type=checkbox] { accent-color: var(--accent); }
+  #estimate { font-size: 14px; margin: 10px 0 4px; }
+  #estimate b { font-size: 17px; }
+  .banner { border-radius: 8px; padding: 10px 12px; margin: 8px 0; font-size: 13.5px; display: none; }
+  .banner.warn { background: #3a2c10; color: var(--warn); border: 1px solid #5c4415; display: block; }
+  .banner.err { background: #3a1515; color: var(--err); border: 1px solid #5c2020; display: block; }
+  .banner.ok { background: #123322; color: var(--ok); border: 1px solid #1d5c3a; display: block; }
+  #platforms { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+  .chip.pass { border-color: var(--ok); color: var(--ok); }
+  .chip.fail { border-color: var(--err); color: var(--err); }
+  .chip.na { opacity: .55; }
+  #progressWrap { background: var(--panel2); border-radius: 999px; height: 12px; overflow: hidden; margin: 10px 0; display: none; }
+  #progressBar { height: 100%; width: 0%; background: var(--accent); transition: width .3s; }
+  #result a { color: var(--accent); font-weight: 600; }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .warnings { color: var(--warn); font-size: 12.5px; white-space: pre-line; margin-top: 6px; }
+  footer { color: var(--muted); font-size: 12px; padding: 8px 22px 24px; max-width: 1280px; margin: 0 auto; }
+  /* tabs */
+  nav.tabs { display: flex; gap: 4px; padding: 10px 22px 0; max-width: 1280px; margin: 0 auto; }
+  nav.tabs button {
+    background: var(--panel); color: var(--muted); border: 1px solid var(--border);
+    border-bottom: none; border-radius: 10px 10px 0 0; padding: 9px 22px; font-weight: 600;
+  }
+  nav.tabs button.active { background: var(--panel2); color: var(--text); }
+  main.view.hidden { display: none; }
+  /* transcribe tab */
+  #tPanel { max-width: 900px; }
+  /* Side-by-side chunk cards: thumbnail on the left as the visual cue,
+     dialogue rows on the right (owner's pick); stacks on narrow screens. */
+  .chunk { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin: 12px 0; display: grid; grid-template-columns: 168px 1fr; gap: 14px; align-items: start; }
+  .chunk img { width: 168px; height: auto; border-radius: 6px; background: #000; min-height: 60px; display: block; }
+  @media (max-width: 640px) { .chunk { grid-template-columns: 1fr; } .chunk img { width: 100%; max-width: 260px; } }
+  .chunk .meta { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .chunk .speaker { background: var(--accent); color: #0b1220; border-radius: 999px; padding: 1px 9px; font-weight: 700; font-size: 11.5px; }
+  .chunk .speaker.scene { background: var(--border); color: var(--text); }
+  .chunk .wc { border: 1px solid var(--border); border-radius: 999px; padding: 1px 9px; }
+  .chunk .orig { font-size: 14px; line-height: 1.4; padding: 7px 9px; background: var(--panel); border-radius: 6px; color: var(--text); }
+  .chunk .orig.empty { color: var(--muted); font-style: italic; }
+  .chunk .tClearOne { padding: 1px 9px; font-size: 11.5px; border-radius: 999px; }
+  .chunk textarea {
+    width: 100%; margin-top: 7px; background: var(--panel); color: var(--text);
+    border: 1px dashed var(--border); border-radius: 6px; padding: 7px 9px; font: inherit;
+    font-size: 14px; resize: vertical; min-height: 38px;
+  }
+  .chunk textarea:focus { border-style: solid; border-color: var(--accent); outline: none; }
+  #importBadge { display: none; font-size: 12.5px; color: var(--ok); border: 1px solid var(--ok); border-radius: 999px; padding: 2px 10px; }
+  #resHeight { color: var(--muted); font-size: 12.5px; }
+  /* multi-clip (v1.3) */
+  #clipList { margin-top: 8px; }
+  .clipRow { display: flex; gap: 8px; align-items: center; padding: 4px 8px; border-radius: 6px; font-size: 12.5px; cursor: pointer; color: var(--muted); }
+  .clipRow.active { background: var(--panel2); color: var(--text); outline: 1px solid var(--accent); }
+  .clipRow .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .clipRow .cbtn { background: none; border: 1px solid var(--border); color: var(--muted); padding: 1px 7px; border-radius: 5px; font-size: 11.5px; cursor: pointer; font-weight: 400; }
+  .clipRow .cbtn:hover { color: var(--text); border-color: var(--accent); }
+  .clipBadge { border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>GIFsmith</h1>
+  <span class="sub">.mov / .mp4 → GIF with meme captions that follow your subtitle file</span>
+  <div id="serverBox">
+    <span id="serverDot" title="server status"></span>
+    <input id="serverUrl" type="text" value="" spellcheck="false">
+  </div>
+</header>
+
+<nav class="tabs">
+  <button id="tabConvert" class="active">Convert</button>
+  <button id="tabTranscribe">Transcribe</button>
+</nav>
+
+<main class="view" id="convertView">
+  <section>
+    <div class="panel">
+      <h2>1 · Video</h2>
+      <div class="row">
+        <input type="file" id="videoFile" accept="video/mp4,video/quicktime,.mp4,.mov,video/*" multiple>
+        <span class="small" id="videoInfo"></span>
+      </div>
+      <div id="clipList"></div>
+      <div id="stage">
+        <div id="dropHint">Choose one or more .mp4 / .mov files — they play in order; preview appears here</div>
+        <video id="video" playsinline muted></video>
+        <canvas id="previewCanvas"></canvas>
+      </div>
+      <div class="row" id="playRow" style="display:none">
+        <button class="secondary" id="playBtn">Play</button>
+        <input type="range" id="seek" min="0" max="1000" value="0">
+        <span class="small" id="timeLabel">0.0s</span>
+      </div>
+      <div class="row" id="trimRow" style="display:none">
+        <label>Trim</label>
+        <input type="number" id="trimStart" min="0" step="0.1" value="0" title="start (s)"> →
+        <input type="number" id="trimEnd" min="0" step="0.1" value="0" title="end (s)">
+        <button class="secondary" id="setStart" title="set start to playhead">⇤ here</button>
+        <button class="secondary" id="setEnd" title="set end to playhead">here ⇥</button>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:18px">
+      <h2>2 · Captions (subtitle file or Transcribe tab)</h2>
+      <div class="row">
+        <input type="file" id="subFile" accept=".srt,.vtt,text/vtt,application/x-subrip">
+        <span class="small" id="subInfo"></span>
+      </div>
+      <div class="row">
+        <button class="secondary" id="importBtn" title="Load the dialogue chunks (your script where filled in) from the Transcribe tab">⇘ Import from Transcribe</button>
+        <span id="importBadge"></span>
+      </div>
+      <div class="warnings" id="subWarnings"></div>
+      <div id="cueList"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="panel">
+      <h2>3 · Caption style</h2>
+      <div class="row"><label>Style</label>
+        <select id="style">
+          <option value="classic">Classic meme (on video)</option>
+          <option value="bar">Caption bar (adds space)</option>
+        </select>
+      </div>
+      <div class="row"><label>Position</label>
+        <select id="position">
+          <option value="bottom">Bottom</option>
+          <option value="top">Top</option>
+        </select>
+      </div>
+      <div class="row" id="barColorRow" style="display:none"><label>Bar</label>
+        <select id="barColor"><option value="white">White bar</option><option value="black">Black bar</option></select>
+      </div>
+      <div class="row"><label>Font</label>
+        <select id="font">
+          <option value="Anton, Impact, 'Arial Black', sans-serif">Anton / Impact</option>
+          <option value="Impact, 'Arial Black', sans-serif">Impact</option>
+          <option value="'Arial Black', Arial, sans-serif">Arial Black</option>
+          <option value="Oswald, 'Arial Narrow', sans-serif">Oswald</option>
+        </select>
+      </div>
+      <div class="row"><label>Size</label><input type="range" id="fontSize" min="4" max="18" value="9" step="0.5"><span class="small" id="fontSizeLabel">9%</span></div>
+      <div class="row"><label>Outline</label><input type="range" id="stroke" min="0" max="16" value="8" step="1"><span class="small" id="strokeLabel">8%</span></div>
+      <div class="row"><label>ALL CAPS</label><input type="checkbox" id="caps" checked></div>
+    </div>
+
+    <div class="panel" style="margin-top:18px">
+      <h2>4 · Output</h2>
+      <div class="row"><label>Resolution</label>
+        <select id="resPreset">
+          <option value="240">240 px — tiny</option>
+          <option value="360">360 px — small</option>
+          <option value="480" selected>480 px — standard</option>
+          <option value="640">640 px — large</option>
+          <option value="720">720 px — HD-ish</option>
+          <option value="1080">1080 px — huge files</option>
+          <option value="custom">Custom…</option>
+        </select>
+        <span id="resHeight"></span>
+      </div>
+      <div class="row"><label>Width (px)</label><input type="number" id="width" min="16" max="3840" step="2" value="480">
+        <button class="secondary" id="autoFit" title="Pick the largest width whose estimated size fits under the warning threshold">Auto-fit ≤ warn</button>
+      </div>
+      <div class="row"><label>FPS</label><input type="number" id="fps" min="1" max="50" step="1" value="15">
+        <span class="small">max 50 — browsers ignore faster GIFs</span></div>
+      <div class="row"><label>Encoder</label>
+        <select id="encoder">
+          <option value="gifski">gifski (best quality)</option>
+          <option value="ffmpeg">ffmpeg palette (fast, deterministic)</option>
+        </select>
+      </div>
+      <div class="row" id="qualityRow"><label>Quality</label><input type="range" id="quality" min="1" max="100" value="90"><span class="small" id="qualityLabel">90</span></div>
+      <div class="row" id="ditherRow" style="display:none"><label>Dither</label>
+        <select id="dither">
+          <option value="sierra2_4a">sierra2_4a (default)</option>
+          <option value="bayer">bayer (smaller file)</option>
+          <option value="floyd_steinberg">floyd–steinberg</option>
+          <option value="none">none (smallest)</option>
+        </select>
+      </div>
+
+      <div id="estimate">Estimated size: <b id="estMB">—</b> <span class="small">(rough heuristic — GIF size is very content-dependent)</span></div>
+      <div class="banner" id="sizeBanner"></div>
+      <div id="platforms"></div>
+
+      <div class="row" style="margin-top:14px">
+        <button id="convert" disabled>Convert to GIF</button>
+        <button class="secondary" id="cancelBtn" style="display:none">Cancel</button>
+      </div>
+      <div id="progressWrap"><div id="progressBar"></div></div>
+      <div class="banner" id="jobBanner"></div>
+      <div id="result"></div>
+    </div>
+  </section>
+</main>
+
+<main class="view hidden" id="transcribeView">
+  <section style="grid-column: 1 / -1">
+    <div class="panel" id="tPanel">
+      <h2>Transcribe — audio → timestamped dialogue (local)</h2>
+      <p class="small">Extracts the audio track and transcribes + diarizes it <b>entirely on
+        this machine</b> (whisper.cpp + sherpa-onnx — nothing is uploaded anywhere, ever).
+        The dialogue arrives as timestamped chunks: treat the transcribed text as a timing
+        placeholder, write your own script in the dashed boxes, then use
+        <b>Import from Transcribe</b> on the Convert tab.</p>
+      <div class="row">
+        <input type="file" id="tVideoFile" accept="video/mp4,video/quicktime,.mp4,.mov,video/*" multiple>
+        <button class="secondary" id="tUseConvertVideo" style="display:none">Use clips from Convert tab</button>
+        <span class="small" id="tVideoInfo"></span>
+      </div>
+      <div class="row">
+        <label>Speakers</label>
+        <select id="tSpeakers">
+          <option value="0">Auto-detect</option>
+          <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+          <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+        </select>
+        <button id="tStart" disabled>Transcribe</button>
+        <button class="secondary" id="tCancel" style="display:none">Cancel</button>
+        <button class="secondary" id="tClearAll" title="Clear all your typed scripts below (keeps the chunks and timing)">Clear all scripts</button>
+        <button class="secondary" id="tSaveNow" title="Save your typed scripts now, so they survive a reload or closed tab">Save transcript</button>
+        <span class="small" id="tSaveStatus"></span>
+      </div>
+      <div class="banner warn" id="tRestoreBanner" style="display:none">
+        <span id="tRestoreText"></span>
+        <button type="button" id="tRestoreBtn">Restore</button>
+        <button type="button" class="secondary" id="tDiscardBtn">Discard</button>
+      </div>
+      <div class="banner" id="tBanner"></div>
+      <div id="tStatus" class="small"></div>
+      <div id="tChunks"></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <button class="secondary" id="exportDebug" style="float:right; font-size:12px; padding:5px 12px" title="Download a combined client+server trace of everything that happened this session">Export debug log</button>
+  Runs entirely on your machine. Server binds to 127.0.0.1 only. Warning threshold defaults to the mean of
+  verified GIF-autoplay platform limits (X 15 · Discord 10 · Tumblr 10 · GIPHY 100 · Mastodon 16 ⇒ ≈30 MB);
+  change it with the server's <code>-warn-mb</code> flag.
+</footer>
+
+<script>
+"use strict";
+/* ---------- client debug log ---------- */
+// Ring buffer of UI events + JS errors; "Export debug log" bundles this
+// with the server-side trace so failures leave a full cross-stack trail.
+const DBG = { buf: [], max: 600 };
+function dbg(msg) {
+  DBG.buf.push({ t: new Date().toISOString(), msg: String(msg).slice(0, 500) });
+  if (DBG.buf.length > DBG.max) DBG.buf.shift();
+}
+window.addEventListener("error", e =>
+  dbg(`JS ERROR: ${e.message} @ ${e.filename ? e.filename.split("/").pop() : "?"}:${e.lineno}`));
+window.addEventListener("unhandledrejection", e =>
+  dbg(`UNHANDLED REJECTION: ${e.reason && e.reason.message ? e.reason.message : e.reason}`));
+dbg("page loaded: " + location.protocol + " · " + navigator.userAgent);
+
+async function exportDebugLog() {
+  dbg("debug log exported");
+  const lines = [];
+  lines.push(`GIFsmith client debug log — ${new Date().toISOString()}`);
+  lines.push(`origin: ${location.href} · ua: ${navigator.userAgent}`);
+  lines.push(`config: ${CONFIG ? JSON.stringify({version: CONFIG.version, ffmpeg: CONFIG.ffmpeg, gifski: CONFIG.gifski, warnMB: CONFIG.warnMB, transcribe: CONFIG.transcribe}) : "server unreachable"}`);
+  lines.push("-".repeat(72));
+  for (const e of DBG.buf) lines.push(`${e.t.slice(11, 23)} [client] ${e.msg}`);
+  lines.push("=".repeat(72));
+  try {
+    const r = await fetch(api("/api/debug/log"), { cache: "no-store" });
+    lines.push(r.ok ? await r.text() : `server debug log unavailable: HTTP ${r.status}`);
+  } catch (err) {
+    lines.push("server debug log unavailable: " + err.message);
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `gifsmith-debug-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+/* ---------- server connection ---------- */
+const $ = id => document.getElementById(id);
+const isFileOrigin = location.protocol === "file:";
+const defaultServer = isFileOrigin ? "http://127.0.0.1:8437" : location.origin;
+$("serverUrl").value = defaultServer;
+let CONFIG = null;
+
+function api(path) {
+  let base = $("serverUrl").value.trim().replace(/\/+$/, "");
+  if (!/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(base)) base = defaultServer;
+  return base + path;
+}
+let lastPingOk = null;
+async function ping() {
+  try {
+    const r = await fetch(api("/api/config"), {cache: "no-store"});
+    if (!r.ok) throw 0;
+    CONFIG = await r.json();
+    if (lastPingOk !== true) { dbg("server connected: " + (CONFIG.ffmpeg || "?")); lastPingOk = true; }
+    $("serverDot").classList.add("ok");
+    $("serverDot").title = "connected — ffmpeg: " + CONFIG.ffmpeg + (CONFIG.gifskiPresent ? " · gifski: " + CONFIG.gifski : " · gifski missing");
+    if (!CONFIG.gifskiPresent) {
+      $("encoder").value = "ffmpeg";
+      $("encoder").querySelector('option[value="gifski"]').disabled = true;
+      syncEncoderRows();
+    }
+    renderPlatforms(null);
+  } catch (e) {
+    CONFIG = null;
+    if (lastPingOk !== false) { dbg("server unreachable at " + api("")); lastPingOk = false; }
+    $("serverDot").classList.remove("ok");
+    $("serverDot").title = "server not reachable — start the gifsmith server";
+  }
+  updateConvertEnabled();
+  syncTranscribeUI();
+}
+ping(); setInterval(ping, 4000);
+$("serverUrl").addEventListener("change", ping);
+
+/* ---------- state ---------- */
+// Multi-clip (v1.3). clips is the ordered timeline; clip 0 defines the
+// output canvas, later clips letterbox into it (mirrors the server graph).
+// Cue times are SOURCE-LOCAL to their clip (q.clip is an index into clips);
+// mapping onto the assembled output timeline happens at estimate/convert
+// time so trims can change after captions load without invalidating them.
+let clips = []; // {file, url, dur, w, h, trimStart, trimEnd}
+let activeClip = -1;
+let videoDur = 0; // duration of the ACTIVE clip (drives the preview player)
+let cues = []; // {clip, start, end, text, enabled}
+let job = null, pollTimer = null;
+
+/* ---------- video loading & preview ---------- */
+const video = $("video"), pc = $("previewCanvas"), pctx = pc.getContext("2d");
+
+function maxClips() { return (CONFIG && CONFIG.limits && CONFIG.limits.maxClips) || 8; }
+
+// Read a file's dimensions/duration through an offscreen element so adding
+// N files at once doesn't fight over the single preview player.
+function readClipMeta(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.onloadedmetadata = () => resolve({
+      file, url, dur: v.duration, w: v.videoWidth, h: v.videoHeight,
+      trimStart: 0, trimEnd: v.duration,
+    });
+    v.onerror = () => { URL.revokeObjectURL(url); reject(new Error((file.name || "file") + ": not a playable video")); };
+    v.src = url;
+  });
+}
+
+$("videoFile").addEventListener("change", async () => {
+  const files = [...$("videoFile").files];
+  $("videoFile").value = ""; // allow re-adding the same file later
+  let rejected = 0;
+  for (const f of files) {
+    if (clips.length >= maxClips()) { dbg(`clip limit ${maxClips()} reached; ignoring ${f.name}`); rejected++; continue; }
+    try { clips.push(await readClipMeta(f)); dbg("clip added: " + f.name); }
+    catch (e) { dbg("clip rejected: " + e.message); rejected++; }
+  }
+  if (rejected) $("subWarnings").textContent = `${rejected} file(s) skipped (unplayable or over the ${maxClips()}-clip limit)`;
+  if (activeClip < 0 && clips.length) setActiveClip(0); else renderClipList();
+  updateEstimate(); updateConvertEnabled(); syncTranscribeUI(); syncResHeight();
+});
+
+function setActiveClip(i) {
+  if (i < 0 || i >= clips.length) return;
+  activeClip = i;
+  const c = clips[i];
+  videoDur = c.dur;
+  if (video.src !== c.url) video.src = c.url;
+  $("videoInfo").textContent = `clip ${i + 1}/${clips.length}: ${c.w}×${c.h} · ${c.dur.toFixed(1)}s`;
+  $("dropHint").style.display = "none";
+  $("playRow").style.display = ""; $("trimRow").style.display = "";
+  $("trimStart").value = c.trimStart.toFixed(2);
+  $("trimEnd").value = c.trimEnd.toFixed(2);
+  renderClipList();
+}
+
+function removeClip(i) {
+  URL.revokeObjectURL(clips[i].url);
+  clips.splice(i, 1);
+  // Cues anchored to the removed clip die; later anchors shift down.
+  cues = cues.filter(q => q.clip !== i).map(q => q.clip > i ? { ...q, clip: q.clip - 1 } : q);
+  dbg(`clip ${i + 1} removed; ${clips.length} remain`);
+  if (!clips.length) {
+    activeClip = -1; videoDur = 0;
+    video.removeAttribute("src"); video.load();
+    $("dropHint").style.display = ""; $("playRow").style.display = "none";
+    $("trimRow").style.display = "none"; $("videoInfo").textContent = "";
+  } else if (activeClip === i) {
+    // The viewed clip was removed: fall to its neighbor.
+    setActiveClip(Math.min(i, clips.length - 1));
+  } else {
+    // A different clip was removed: KEEP viewing the same clip, whose index
+    // may have shifted down (review finding: removing clip C while viewing
+    // clip A must not yank the preview/trim fields onto clip B).
+    setActiveClip(activeClip > i ? activeClip - 1 : activeClip);
+  }
+  renderClipList(); renderCueList(); updateEstimate(); updateConvertEnabled(); syncTranscribeUI(); syncResHeight();
+}
+
+function moveClip(i, d) {
+  const k = i + d;
+  if (k < 0 || k >= clips.length) return;
+  [clips[i], clips[k]] = [clips[k], clips[i]];
+  // Cue anchors and geometry follow the reorder (clip 0 defines the canvas).
+  cues = cues.map(q => q.clip === i ? { ...q, clip: k } : (q.clip === k ? { ...q, clip: i } : q));
+  if (activeClip === i) activeClip = k; else if (activeClip === k) activeClip = i;
+  renderClipList(); renderCueList(); updateEstimate(); syncResHeight();
+}
+
+function renderClipList() {
+  const el = $("clipList");
+  el.innerHTML = "";
+  if (!clips.length) return;
+  clips.forEach((c, i) => {
+    const row = document.createElement("div");
+    row.className = "clipRow" + (i === activeClip ? " active" : "");
+    const nm = document.createElement("span"); nm.className = "nm";
+    nm.textContent = `${i + 1}. ${c.file.name || "clip"}`;
+    const tl = document.createElement("span");
+    tl.textContent = clipWindow(c).dur.toFixed(1) + "s";
+    tl.title = "trimmed length";
+    row.append(nm, tl);
+    const mk = (label, title, fn) => {
+      const b = document.createElement("button");
+      b.className = "cbtn"; b.textContent = label; b.title = title;
+      b.addEventListener("click", ev => { ev.stopPropagation(); fn(); });
+      row.appendChild(b);
+    };
+    mk("↑", "move earlier", () => moveClip(i, -1));
+    mk("↓", "move later", () => moveClip(i, 1));
+    mk("×", "remove clip", () => removeClip(i));
+    row.addEventListener("click", () => setActiveClip(i));
+    el.appendChild(row);
+  });
+  if (clips.length > 1) {
+    const note = document.createElement("div"); note.className = "small";
+    note.textContent = "Clips play in this order. Clip 1 sets the canvas; others letterbox to fit. Click a clip to preview and trim it.";
+    el.appendChild(note);
+  }
+}
+
+video.addEventListener("loadedmetadata", drawPreview);
+video.addEventListener("timeupdate", () => { $("seek").value = Math.round(video.currentTime / videoDur * 1000) || 0; $("timeLabel").textContent = video.currentTime.toFixed(1) + "s"; });
+$("seek").addEventListener("input", () => { if (videoDur) video.currentTime = $("seek").value / 1000 * videoDur; });
+$("playBtn").addEventListener("click", () => { video.paused ? (video.play(), $("playBtn").textContent = "Pause") : (video.pause(), $("playBtn").textContent = "Play"); });
+video.addEventListener("pause", () => $("playBtn").textContent = "Play");
+video.addEventListener("play", () => $("playBtn").textContent = "Pause");
+
+// Trim edits write into the ACTIVE clip's model (per-clip trims, v1.3).
+function applyTrim() {
+  if (activeClip < 0) return;
+  const c = clips[activeClip];
+  let a = parseFloat($("trimStart").value); if (!isFinite(a)) a = 0;
+  let b = parseFloat($("trimEnd").value); if (!isFinite(b)) b = c.dur;
+  c.trimStart = Math.max(0, Math.min(a, c.dur));
+  c.trimEnd = Math.max(c.trimStart + 0.05, Math.min(b, c.dur));
+  renderClipList(); updateEstimate();
+}
+$("trimStart").addEventListener("input", applyTrim);
+$("trimEnd").addEventListener("input", applyTrim);
+$("setStart").addEventListener("click", () => { if (activeClip < 0) return; $("trimStart").value = video.currentTime.toFixed(2); applyTrim(); });
+$("setEnd").addEventListener("click", () => { if (activeClip < 0) return; $("trimEnd").value = video.currentTime.toFixed(2); applyTrim(); });
+
+/* ---------- assembled-timeline math (mirrors the server) ---------- */
+function clipWindow(c) {
+  let a = Math.max(0, Math.min(c.trimStart || 0, c.dur));
+  let b = Math.min(c.dur, c.trimEnd || c.dur);
+  if (b <= a) b = Math.min(c.dur, a + 0.05);
+  return { a, b, dur: b - a };
+}
+function totalDur() { return clips.reduce((s, c) => s + clipWindow(c).dur, 0); }
+function clipOffsets() {
+  // Frame-quantized (review finding): ffmpeg's fps filter emits
+  // ceil(dur·fps) frames per segment, so each concat seam actually lands at
+  // a frame boundary at-or-after the nominal trim sum. Quantizing here
+  // keeps cue anchors from drifting up to a frame per preceding clip.
+  const fps = clampFps();
+  let off = 0;
+  return clips.map(c => {
+    const o = off;
+    off += Math.ceil(clipWindow(c).dur * fps - 1e-9) / fps;
+    return o;
+  });
+}
+// Map a source-local cue onto the assembled output timeline; null when the
+// cue falls entirely outside its clip's current trim window.
+function mapCueOut(q, offs) {
+  const c = clips[q.clip];
+  if (!c) return null;
+  const w = clipWindow(c);
+  if (q.end <= w.a || q.start >= w.b) return null;
+  const off = (offs || clipOffsets())[q.clip];
+  return { start: Math.max(q.start, w.a) - w.a + off, end: Math.min(q.end, w.b) - w.a + off };
+}
+
+function drawLoop() { drawPreview(); requestAnimationFrame(drawLoop); }
+requestAnimationFrame(drawLoop);
+
+/* ---------- geometry (must mirror the server exactly) ---------- */
+function scaledEvenHeight(srcW, srcH, dstW) {
+  if (srcW <= 0 || srcH <= 0) return dstW;
+  let h = Math.round(dstW * srcH / srcW);
+  if (h < 2) h = 2;
+  return h - (h % 2);
+}
+function outGeometry(stArg) {
+  const st = stArg || settings();
+  let W = parseInt($("width").value, 10) || 480;
+  W = Math.min(3840, Math.max(16, W)); W -= W % 2;
+  const c0 = clips[0]; // clip 0 defines the canvas (server contract)
+  const vidH = scaledEvenHeight(c0 ? c0.w : 16, c0 ? c0.h : 9, W);
+  let barPx = 0;
+  if (st.style === "bar") barPx = computeBarPx(W, vidH, st);
+  return { W, vidH, barPx, canvasH: vidH + barPx };
+}
+// fitDims mirrors the server's fitEven: letterbox a later clip into the
+// clip-0 canvas, preserving aspect, even dimensions.
+function fitDims(sw, sh, bw, bh) {
+  if (sw <= 0 || sh <= 0) return { w: bw, h: bh };
+  let w = bw, h = Math.round(bw * sh / sw);
+  if (h > bh) { h = bh; w = Math.min(bw, Math.round(bh * sw / sh)); }
+  w = Math.max(2, w - w % 2); h = Math.max(2, h - h % 2);
+  return { w, h };
+}
+
+/* ---------- caption rendering (shared by preview & export) ---------- */
+function settings() {
+  return {
+    style: $("style").value,
+    position: $("position").value,
+    barColor: $("barColor").value,
+    font: $("font").value,
+    fontSizePct: parseFloat($("fontSize").value),
+    strokePct: parseFloat($("stroke").value),
+    caps: $("caps").checked,
+  };
+}
+function fontPx(vidH, st) { return Math.max(8, Math.round(vidH * (st || settings()).fontSizePct / 100)); }
+
+// breakWord splits a single word that is wider than maxWidth into
+// character-level pieces (review finding: an unbroken long token used to
+// render as one line overflowing the canvas invisibly).
+function breakWord(ctx, word, maxWidth) {
+  const out = [];
+  let piece = "";
+  for (const ch of word) {
+    if (piece && ctx.measureText(piece + ch).width > maxWidth) { out.push(piece); piece = ch; }
+    else piece += ch;
+  }
+  if (piece) out.push(piece);
+  return out.length ? out : [word];
+}
+
+function wrapText(ctx, text, maxWidth) {
+  const out = [];
+  for (const rawLine of text.split("\n")) {
+    const words = rawLine.split(/\s+/).filter(Boolean)
+      .flatMap(w => ctx.measureText(w).width > maxWidth ? breakWord(ctx, w, maxWidth) : [w]);
+    if (!words.length) continue;
+    let line = words[0];
+    for (let i = 1; i < words.length; i++) {
+      const t = line + " " + words[i];
+      if (ctx.measureText(t).width > maxWidth) { out.push(line); line = words[i]; }
+      else line = t;
+    }
+    out.push(line);
+  }
+  return out.length ? out : [""];
+}
+
+// Uniform bar height: enough for the tallest wrapped cue at current settings.
+// Capped at 2000 to mirror the server's clamp exactly (parity finding).
+//
+// Memoized (review finding): drawLoop calls drawPreview -> outGeometry ->
+// computeBarPx on every requestAnimationFrame tick (~60Hz) whenever style is
+// "bar", unconditionally. Un-memoized, this re-ran wrapText's measureText
+// calls over EVERY enabled cue on EVERY tick regardless of whether anything
+// actually changed — at even a modest real subtitle file, enough to visibly
+// stutter the live preview; at the documented MaxCues=1000 cap, enough to
+// freeze the tab. The cache key covers every input the computation actually
+// reads (W, vidH, font, fontSizePct, caps, and each enabled cue's own text);
+// building that key is a cheap string-length pass, nowhere near as
+// expensive as the measureText-heavy computation it guards.
+let barPxCache = null; // { key, value }
+const barMeasureCtx = document.createElement("canvas").getContext("2d"); // reused, not recreated per call
+function computeBarPx(W, vidH, stArg) {
+  const st = stArg || settings();
+  let key = `${W}x${vidH}|${st.font}|${st.fontSizePct}|${st.caps ? 1 : 0}`;
+  for (const q of cues) { if (q.enabled) key += `|${q.text}`; }
+  if (barPxCache && barPxCache.key === key) return barPxCache.value;
+
+  const fp = fontPx(vidH, st), lh = Math.round(fp * 1.25);
+  barMeasureCtx.font = `${fp}px ${st.font}`;
+  let maxLines = 1;
+  for (const q of cues.filter(q => q.enabled)) {
+    const t = st.caps ? q.text.toUpperCase() : q.text;
+    maxLines = Math.max(maxLines, wrapText(barMeasureCtx, t, W * 0.94).length);
+  }
+  let bar = maxLines * lh + Math.round(fp * 0.7);
+  bar += bar % 2;
+  const value = Math.max(16, Math.min(2000, bar));
+  barPxCache = { key, value };
+  return value;
+}
+
+// Draws one cue onto ctx sized W×canvasH. Classic: stroked text over video
+// area. Bar: black/white text inside the bar region. Transparent elsewhere —
+// the server pads the bar background color itself.
+// stArg: pass a settings snapshot during export so mid-conversion UI changes
+// cannot desynchronize the PNGs from the submitted settings JSON.
+function drawCaption(ctx, W, vidH, barPx, canvasH, text, stArg) {
+  const st = stArg || settings();
+  const fp = fontPx(vidH, st), lh = Math.round(fp * 1.25);
+  const display = st.caps ? text.toUpperCase() : text;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.font = `${fp}px ${st.font}`;
+  const lines = wrapText(ctx, display, W * 0.94);
+  const cx = W / 2;
+
+  if (st.style === "classic") {
+    const margin = Math.round(vidH * 0.035);
+    const videoTop = (barPx && st.position === "top") ? barPx : 0; // barPx is 0 for classic
+    let yStart;
+    if (st.position === "top") yStart = videoTop + margin + fp;
+    else yStart = videoTop + vidH - margin - (lines.length - 1) * lh;
+    ctx.lineJoin = "round";
+    const lw = fp * st.strokePct / 100 * 2; // 0 → honor "no outline"
+    ctx.lineWidth = Math.max(lw > 0 ? 1 : 0, lw);
+    ctx.strokeStyle = "#000";
+    ctx.fillStyle = "#fff";
+    lines.forEach((ln, i) => {
+      const y = yStart + i * lh;
+      if (ctx.lineWidth > 0) ctx.strokeText(ln, cx, y);
+      ctx.fillText(ln, cx, y);
+    });
+  } else {
+    const barTop = st.position === "top" ? 0 : canvasH - barPx;
+    const pad = Math.round(fp * 0.35);
+    const yStart = barTop + pad + fp;
+    ctx.fillStyle = st.barColor === "white" ? "#000" : "#fff";
+    lines.forEach((ln, i) => ctx.fillText(ln, cx, yStart + i * lh));
+  }
+}
+
+// Preview shows the ACTIVE clip; a cue is visible when the playhead is in
+// its (source-local) window and the cue is anchored to this clip.
+function activeCues(t) { return cues.filter(q => q.enabled && q.clip === activeClip && t >= q.start && t < q.end); }
+
+function drawPreview() {
+  if (!clips.length || activeClip < 0) return;
+  const { W, vidH, barPx, canvasH } = outGeometry();
+  if (pc.width !== W || pc.height !== canvasH) { pc.width = W; pc.height = canvasH; }
+  const st = settings();
+  pctx.clearRect(0, 0, W, canvasH);
+  const videoY = (st.style === "bar" && st.position === "top") ? barPx : 0;
+  if (st.style === "bar") {
+    pctx.fillStyle = st.barColor;
+    if (st.position === "top") pctx.fillRect(0, 0, W, barPx);
+    else pctx.fillRect(0, canvasH - barPx, W, barPx);
+  }
+  // Letterbox the active clip exactly as the server will (WYSIWYG for the
+  // seam: clip 1's canvas, later clips centered on black).
+  const c = clips[activeClip];
+  let dw = W, dh = vidH;
+  if (activeClip > 0) {
+    pctx.fillStyle = "#000";
+    pctx.fillRect(0, videoY, W, vidH);
+    const f = fitDims(c.w, c.h, W, vidH);
+    dw = f.w; dh = f.h;
+  }
+  pctx.drawImage(video, (W - dw) / 2, videoY + (vidH - dh) / 2, dw, dh);
+  for (const q of activeCues(video.currentTime)) {
+    drawCaption(pctx, W, vidH, barPx, canvasH, q.text);
+  }
+}
+
+/* ---------- subtitles ---------- */
+$("subFile").addEventListener("change", async () => {
+  const f = $("subFile").files[0];
+  if (!f) return;
+  $("subInfo").textContent = "parsing…";
+  const fd = new FormData();
+  fd.append("file", f);
+  try {
+    const r = await fetch(api("/api/subtitles"), { method: "POST", body: fd });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    // Subtitle-file times are source times in CLIP 1 (a subtitle file
+    // belongs to one source video). Captions over later clips come from the
+    // Transcribe tab or inline edits.
+    cues = data.cues.map(c => ({ clip: 0, start: c.start, end: c.end, text: c.text.replace(/\n/g, " "), enabled: true }));
+    dbg(`subtitles parsed: ${data.format} ${cues.length} cues, ${(data.warnings || []).length} warnings`);
+    $("importBadge").style.display = "none"; // subtitle file replaces any transcribe import
+    $("subInfo").textContent = `${data.format.toUpperCase()} · ${cues.length} cues` +
+      (clips.length > 1 ? " · times apply to clip 1" : "");
+    $("subWarnings").textContent = (data.warnings || []).join("\n");
+    renderCueList(); updateConvertEnabled();
+  } catch (e) {
+    cues = []; renderCueList();
+    dbg("subtitle parse FAILED: " + e.message);
+    $("subInfo").textContent = "";
+    $("subWarnings").textContent = "Could not parse: " + e.message + (CONFIG ? "" : " (server offline?)");
+    updateConvertEnabled();
+  }
+});
+
+function renderCueList() {
+  const el = $("cueList");
+  el.innerHTML = "";
+  cues.forEach((q, i) => {
+    const row = document.createElement("div"); row.className = "cue";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = q.enabled;
+    cb.addEventListener("change", () => { q.enabled = cb.checked; updateEstimate(); });
+    const t = document.createElement("span"); t.className = "t";
+    t.textContent = fmtT(q.start) + "–" + fmtT(q.end);
+    t.title = "click to preview this cue (times are within its clip)";
+    t.addEventListener("click", () => {
+      if (!clips[q.clip]) return;
+      setActiveClip(q.clip);
+      video.currentTime = Math.min(q.start + 0.01, clips[q.clip].dur);
+    });
+    const inp = document.createElement("input"); inp.type = "text"; inp.value = q.text;
+    inp.addEventListener("input", () => { q.text = inp.value; });
+    if (clips.length > 1) {
+      const cbadge = document.createElement("span"); cbadge.className = "clipBadge";
+      cbadge.textContent = "C" + (q.clip + 1);
+      cbadge.title = "clip this caption is anchored to";
+      row.append(cb, cbadge, t, inp);
+    } else {
+      row.append(cb, t, inp);
+    }
+    el.appendChild(row);
+  });
+}
+function fmtT(s) {
+  // Round to deciseconds FIRST, then split — otherwise 59.96 renders as
+  // "0:60.0" (review finding).
+  const ds = Math.round(s * 10);
+  const m = Math.floor(ds / 600);
+  const ss = ((ds - m * 600) / 10).toFixed(1);
+  return `${m}:${ss.padStart(4, "0")}`;
+}
+
+/* ---------- estimate & platform chips ---------- */
+function estimateBytes() {
+  if (!clips.length) return 0;
+  const { W, canvasH } = outGeometry();
+  const fps = clampFps();
+  const dur = totalDur(); // assembled multi-clip timeline
+  const enc = $("encoder").value, dith = $("dither").value;
+  let bpp = 0.26;
+  if (enc === "gifski") bpp = 0.30;
+  else if (dith === "none") bpp = 0.18;
+  else if (dith === "bayer") bpp = 0.22;
+  return W * canvasH * fps * dur * bpp;
+}
+function clampFps() { let f = parseFloat($("fps").value) || 15; return Math.min(50, Math.max(1, f)); }
+// warnMB: null/undefined config → default; explicit 0 (server -warn-mb 0)
+// means "warnings disabled" and must not fall back to 30.2.
+function warnMB() { const v = CONFIG ? CONFIG.warnMB : undefined; return (v === undefined || v === null) ? 30.2 : v; }
+
+function updateEstimate() {
+  const est = estimateBytes();
+  $("estMB").textContent = est ? (est / 1048576).toFixed(1) + " MB" : "—";
+  const banner = $("sizeBanner");
+  if (est && warnMB() > 0 && est / 1048576 > warnMB()) {
+    banner.className = "banner warn";
+    banner.textContent = `Estimated ${(est/1048576).toFixed(0)} MB exceeds the ${warnMB().toFixed(0)} MB autoplay-friendly threshold — most platforms won't autoplay it. Reduce width, fps or duration.`;
+  } else { banner.className = "banner"; banner.textContent = ""; }
+  renderPlatforms(est || null);
+  // Called directly (not via a wrapper): listeners registered above capture
+  // this function object, so a later reassignment would never reach them —
+  // review finding.
+  syncResHeight();
+}
+function renderPlatforms(bytes) {
+  const el = $("platforms");
+  if (!CONFIG) { el.innerHTML = ""; return; }
+  el.innerHTML = "";
+  for (const p of CONFIG.platforms) {
+    const chip = document.createElement("span");
+    let cls = "chip na", mark = "";
+    if (bytes != null) {
+      const okp = bytes / 1048576 <= p.limitMB;
+      cls = "chip " + (okp ? "pass" : "fail");
+      mark = okp ? " ✓" : " ✕";
+    }
+    chip.className = cls + (p.inMean ? "" : " na");
+    chip.title = p.note + (p.inMean ? " (counts toward warn threshold)" : " (general file cap)");
+    chip.textContent = `${p.name} ${p.limitMB}MB${mark}`;
+    el.appendChild(chip);
+  }
+}
+// trimStart/trimEnd are NOT in this list: applyTrim owns them (it must
+// write the active clip's model before the estimate reads totalDur()).
+["width","fps","encoder","dither","quality",
+ "style","fontSize","stroke","caps","font","position","barColor"]
+  .forEach(id => { $(id).addEventListener("input", updateEstimate); $(id).addEventListener("change", updateEstimate); });
+
+/* ---------- style UI sync ---------- */
+function syncEncoderRows() {
+  const gif = $("encoder").value === "gifski";
+  $("qualityRow").style.display = gif ? "" : "none";
+  $("ditherRow").style.display = gif ? "none" : "";
+}
+$("encoder").addEventListener("change", () => { syncEncoderRows(); updateEstimate(); });
+$("style").addEventListener("change", () => { $("barColorRow").style.display = $("style").value === "bar" ? "" : "none"; });
+$("fontSize").addEventListener("input", () => $("fontSizeLabel").textContent = $("fontSize").value + "%");
+$("stroke").addEventListener("input", () => $("strokeLabel").textContent = $("stroke").value + "%");
+$("quality").addEventListener("input", () => $("qualityLabel").textContent = $("quality").value);
+syncEncoderRows();
+
+/* ---------- conversion ---------- */
+function updateConvertEnabled() {
+  $("convert").disabled = !(clips.length && CONFIG);
+}
+
+async function renderCuePNG(W, vidH, barPx, canvasH, text, st) {
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = canvasH;
+  const ctx = cv.getContext("2d");
+  drawCaption(ctx, W, vidH, barPx, canvasH, text, st);
+  const blob = await new Promise(res => cv.toBlob(res, "image/png"));
+  if (!blob) throw new Error("caption too large to render — reduce width or font size");
+  return blob;
+}
+
+$("convert").addEventListener("click", async () => {
+  if (!clips.length || !CONFIG) return;
+  $("convert").disabled = true;
+  $("jobBanner").className = "banner"; $("result").innerHTML = "";
+  try {
+    // Make sure the meme font is actually loaded before rasterizing.
+    try { await document.fonts.load(`${fontPx(200)}px ${settings().font}`); await document.fonts.ready; } catch (e) { dbg("font load failed: " + e.message); }
+
+    // Snapshot everything before the async render loop: mid-conversion UI
+    // edits must not desynchronize PNGs from the submitted settings.
+    // All clips share ONE server upload budget (the request-body cap, not a
+    // per-clip cap) — check before streaming gigabytes (review finding).
+    const capMB = (CONFIG && CONFIG.maxUploadMB) || 2048;
+    const totalBytes = clips.reduce((s, c) => s + (c.file.size || 0), 0);
+    if (totalBytes > capMB * 1048576 * 0.98) {
+      throw new Error(`clips total ${(totalBytes / 1048576).toFixed(0)} MB — the server accepts ${capMB} MB per request and all clips share it. Trim, remove or re-encode clips.`);
+    }
+
+    const st = settings();
+    const { W, vidH, barPx, canvasH } = outGeometry(st);
+    const offs = clipOffsets();
+    const trims = clips.map(c => { const w = clipWindow(c); return { trimStart: w.a, trimEnd: w.b }; });
+    // Map source-local cues onto the assembled output timeline (the v1.3
+    // server contract); cues outside their clip's trim window drop here.
+    const active = [];
+    for (const q of cues) {
+      if (!q.enabled || !q.text.trim()) continue;
+      const m = mapCueOut(q, offs);
+      if (m && m.end > m.start) active.push({ start: m.start, end: m.end, text: q.text });
+    }
+    active.sort((a, b) => a.start - b.start);
+
+    const fd = new FormData();
+    const cueMeta = [];
+    for (let i = 0; i < active.length; i++) {
+      const blob = await renderCuePNG(W, vidH, barPx, canvasH, active[i].text, st);
+      fd.append("cue_" + i, blob, "cue_" + i + ".png");
+      cueMeta.push({ start: active[i].start, end: active[i].end });
+    }
+    fd.append("settings", JSON.stringify({
+      clips: trims,
+      width: W, fps: clampFps(),
+      style: st.style,
+      barPx: barPx, barPos: st.position, barColor: st.barColor,
+      encoder: $("encoder").value,
+      quality: parseInt($("quality").value, 10),
+      dither: $("dither").value,
+      maxColors: 256,
+      cues: cueMeta,
+    }));
+    clips.forEach((c, i) => fd.append("video_" + i, c.file, "video_" + i));
+
+    dbg(`convert start: ${W}x${canvasH} @${clampFps()}fps ${totalDur().toFixed(1)}s clips=${clips.length} ${$("encoder").value} style=${st.style} cues=${active.length}`);
+    const r = await fetch(api("/api/jobs"), { method: "POST", body: fd });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    job = data.id;
+    dbg("convert job accepted: " + data.id.slice(0, 8) + " est " + (data.estimateBytes / 1048576).toFixed(1) + "MB");
+    $("progressWrap").style.display = ""; $("progressBar").style.width = "2%";
+    $("cancelBtn").style.display = "";
+    poll();
+  } catch (e) {
+    dbg("convert start FAILED: " + e.message);
+    $("jobBanner").className = "banner err";
+    $("jobBanner").textContent = "Failed to start: " + e.message + " — “Export debug log” (bottom of page) captures a full trace.";
+    $("convert").disabled = false;
+  }
+});
+
+$("cancelBtn").addEventListener("click", async () => {
+  if (!job) return;
+  const cancelled = job;
+  stopPoll("Cancelled.", "warn"); // clears `job` first: in-flight polls become no-ops
+  try { await fetch(api("/api/jobs/" + cancelled), { method: "DELETE" }); } catch (e) { dbg("cancel DELETE failed: " + e.message); }
+});
+
+function stopPoll(msg, cls) {
+  clearTimeout(pollTimer); pollTimer = null; job = null;
+  $("cancelBtn").style.display = "none";
+  $("progressWrap").style.display = "none";
+  $("convert").disabled = false;
+  if (msg) {
+    dbg("convert: " + msg);
+    if (cls === "err") msg += " — “Export debug log” (bottom of page) captures a full trace.";
+    $("jobBanner").className = "banner " + cls; $("jobBanner").textContent = msg;
+  }
+}
+
+async function poll() {
+  const myJob = job; // guard: a stale continuation must never touch newer state
+  if (!myJob) return;
+  try {
+    const r = await fetch(api("/api/jobs/" + myJob), {cache: "no-store"});
+    if (job !== myJob) return; // cancelled or replaced while fetch was in flight
+    const s = await r.json();
+    if (job !== myJob) return;
+    if (!r.ok) throw new Error(s.error || r.statusText);
+    $("progressBar").style.width = Math.round(Math.max(0.02, s.progress) * 100) + "%";
+    if (s.state === "done") {
+      // Build the result via DOM APIs — server JSON is never interpolated
+      // into HTML (a hostile process squatting the port must not get XSS).
+      const id = /^[a-f0-9]{32}$/.test(s.id) ? s.id : myJob;
+      const mb = s.outBytes / 1048576;
+      const p = document.createElement("p");
+      const a = document.createElement("a");
+      a.href = api("/api/jobs/" + id + "/result");
+      a.download = "gifsmith.gif";
+      a.textContent = "Download GIF";
+      // "Show in folder" (Chrome downloads-page phrasing) rather than
+      // "Reveal in Finder": this button works cross-platform (Finder on
+      // macOS, Explorer on Windows, xdg-open's folder on Linux — see
+      // reveal.go), so the label shouldn't name one OS's file manager.
+      // It opens the SERVER's own copy of the GIF (the exact bytes the
+      // download link above serves) — a web page has no way to know where
+      // the browser itself ultimately saved a downloaded copy, so that
+      // distinction is spelled out in the title tooltip rather than glossed
+      // over.
+      const reveal = document.createElement("button");
+      reveal.type = "button"; reveal.className = "secondary";
+      reveal.textContent = "Show in folder";
+      reveal.title = "Opens this server's own copy of the file — not necessarily where your browser saved a downloaded copy, which a web page can't see.";
+      const pathSpan = document.createElement("span");
+      pathSpan.className = "small";
+      reveal.addEventListener("click", async () => {
+        reveal.disabled = true;
+        try {
+          const rr = await fetch(api("/api/jobs/" + id + "/reveal"), { method: "POST" });
+          const rd = await rr.json();
+          if (!rr.ok) throw new Error(rd.error || rr.statusText);
+          pathSpan.textContent = " " + rd.path;
+          dbg("revealed job output: " + rd.path);
+        } catch (e) {
+          pathSpan.textContent = " couldn't open the file manager: " + e.message;
+          dbg("reveal FAILED: " + e.message);
+        } finally {
+          reveal.disabled = false;
+        }
+      });
+      p.append(a, ` — ${mb.toFixed(1)} MB · ${Number(s.width)}×${Number(s.height)} @ ${Number(s.fps)}fps · ${Number(s.duration).toFixed(1)}s `, reveal, pathSpan);
+      $("result").replaceChildren(p);
+      renderPlatforms(s.outBytes);
+      const over = warnMB() > 0 && mb > warnMB();
+      stopPoll(over
+        ? `Done, but ${mb.toFixed(1)} MB exceeds the ${warnMB().toFixed(0)} MB autoplay-friendly threshold (see platform chips).`
+        : `Done — ${mb.toFixed(1)} MB.`,
+        over ? "warn" : "ok");
+      return;
+    }
+    if (s.state === "error") { stopPoll("Encoding failed: " + s.error, "err"); return; }
+    if (s.state === "cancelled") { stopPoll("Cancelled.", "warn"); return; }
+    pollTimer = setTimeout(poll, 600);
+  } catch (e) {
+    if (job !== myJob) return;
+    stopPoll("Lost contact with server: " + e.message, "err");
+  }
+}
+
+/* ============================ tabs ============================ */
+// Declared BEFORE the hash-check below runs showTab→syncTranscribeUI —
+// a `let` further down would be a temporal-dead-zone crash (caught by the
+// CDP-driven UI E2E; it killed the entire script on #transcribe loads).
+let tState = { jobId: null, chunks: [], prevChunks: null, pollTimer: null, files: [], clipCount: 1 };
+
+// ---- transcript draft persistence (review finding, flagged multiple times:
+// typed scripts lived ONLY in JS memory, with no save affordance and no
+// durability across a reload/closed-tab/came-back-later gap — a real,
+// repeatedly-hit failure mode, not a hypothetical). Auto-saves on every
+// meaningful edit (debounced) AND an explicit "Save transcript" button for
+// visible, user-triggered confirmation — both write to the same place, so
+// neither is a weaker guarantee than the other.
+const TRANSCRIPT_DRAFT_KEY = "gifsmith.transcriptDraft.v1";
+let tSaveDebounce = null;
+
+function saveTranscriptDraft() {
+  if (!tState.chunks.length) { try { localStorage.removeItem(TRANSCRIPT_DRAFT_KEY); } catch (_) {} return; }
+  try {
+    localStorage.setItem(TRANSCRIPT_DRAFT_KEY, JSON.stringify({
+      version: 1, savedAt: Date.now(), jobId: tState.jobId,
+      clipCount: tState.clipCount, chunks: tState.chunks,
+    }));
+    $("tSaveStatus").textContent = "Saved " + new Date().toLocaleTimeString();
+    $("tSaveStatus").style.color = "";
+  } catch (e) {
+    // A save failure (quota, private browsing) must NOT fail silently --
+    // that would just be the same bug class this feature exists to fix.
+    $("tSaveStatus").textContent = "Could not save: " + e.message;
+    $("tSaveStatus").style.color = "var(--warn)";
+    dbg("transcript draft save failed: " + e.message);
+  }
+}
+function scheduleTranscriptAutoSave() {
+  clearTimeout(tSaveDebounce);
+  tSaveDebounce = setTimeout(saveTranscriptDraft, 800);
+}
+function loadTranscriptDraft() {
+  try {
+    const raw = localStorage.getItem(TRANSCRIPT_DRAFT_KEY);
+    if (!raw) return null;
+    const draft = JSON.parse(raw);
+    if (!draft || !Array.isArray(draft.chunks) || !draft.chunks.length) return null;
+    return draft;
+  } catch (e) {
+    dbg("transcript draft load failed: " + e.message);
+    return null;
+  }
+}
+
+function showTab(name) {
+  const conv = name === "convert";
+  $("convertView").classList.toggle("hidden", !conv);
+  $("transcribeView").classList.toggle("hidden", conv);
+  $("tabConvert").classList.toggle("active", conv);
+  $("tabTranscribe").classList.toggle("active", !conv);
+  if (!conv) syncTranscribeUI();
+}
+$("tabConvert").addEventListener("click", () => showTab("convert"));
+$("tabTranscribe").addEventListener("click", () => showTab("transcribe"));
+if (location.hash === "#transcribe") showTab("transcribe");
+
+// Offer to restore a saved transcript draft on load — never auto-load it
+// silently (that could clobber a fresh transcription the user is about to
+// run, or surprise them with old text they don't recognize).
+{
+  const draft = loadTranscriptDraft();
+  if (draft) {
+    const n = draft.chunks.length;
+    $("tRestoreText").textContent = `You have a saved transcript draft from ${new Date(draft.savedAt).toLocaleString()} (${n} chunk${n === 1 ? "" : "s"}). Restore it?`;
+    $("tRestoreBanner").style.display = "";
+    $("tRestoreBtn").addEventListener("click", () => {
+      tState.chunks = draft.chunks;
+      tState.clipCount = draft.clipCount || 1;
+      $("tRestoreBanner").style.display = "none";
+      renderChunks(draft.jobId || "restored");
+      dbg(`restored transcript draft from ${new Date(draft.savedAt).toISOString()} (${n} chunks)`);
+    });
+    $("tDiscardBtn").addEventListener("click", () => {
+      try { localStorage.removeItem(TRANSCRIPT_DRAFT_KEY); } catch (_) {}
+      $("tRestoreBanner").style.display = "none";
+    });
+  }
+}
+
+/* ==================== resolution presets & auto-fit ==================== */
+function syncResHeight() {
+  if (!clips.length) { $("resHeight").textContent = ""; return; }
+  const { W, canvasH } = outGeometry();
+  $("resHeight").textContent = `→ ${W}×${canvasH}`;
+  // Reflect the width in the preset dropdown (or Custom).
+  const w = String(parseInt($("width").value, 10) || 480);
+  const opt = [...$("resPreset").options].find(o => o.value === w);
+  $("resPreset").value = opt ? w : "custom";
+}
+$("resPreset").addEventListener("change", () => {
+  const v = $("resPreset").value;
+  if (v !== "custom") { $("width").value = v; updateEstimate(); }
+  syncResHeight();
+});
+$("autoFit").addEventListener("click", () => {
+  if (!clips.length) return;
+  const limitMB = warnMB() > 0 ? warnMB() : 30.2;
+  const fps = clampFps(), dur = totalDur();
+  const enc = $("encoder").value, dith = $("dither").value;
+  let bpp = 0.26;
+  if (enc === "gifski") bpp = 0.30;
+  else if (dith === "none") bpp = 0.18;
+  else if (dith === "bayer") bpp = 0.22;
+  // estimate = W * H * fps * dur * bpp with H ≈ r·W (r from current canvas).
+  const g = outGeometry();
+  const r = g.canvasH / g.W;
+  let W = Math.floor(Math.sqrt((limitMB * 1048576) / (fps * dur * bpp * r)));
+  W = Math.max(16, Math.min(3840, W)); W -= W % 2;
+  $("width").value = W;
+  updateEstimate();
+  // The bar-height clamps make the height/width ratio slightly nonlinear, so
+  // re-check the estimate at the solved width instead of promising success.
+  const finalOver = estimateBytes() / 1048576 > limitMB;
+  $("jobBanner").className = finalOver ? "banner warn" : "banner ok";
+  $("jobBanner").textContent = finalOver
+    ? `Auto-fit: width ${W}px is the closest fit, but the estimate is still over ${limitMB.toFixed(0)} MB — shorten the clip or lower fps too.`
+    : `Auto-fit: width ${W}px keeps the estimate under ${limitMB.toFixed(0)} MB at ${fps}fps for ${dur.toFixed(1)}s (estimate only — encode to confirm).`;
+});
+
+/* ========================= transcribe tab ========================= */
+function transcribeCfg() { return (CONFIG && CONFIG.transcribe) || { available: false }; }
+
+// The files that would actually be transcribed right now: an explicit
+// selection wins; otherwise the Convert tab's clips (in order).
+function tEffectiveFiles() {
+  return tState.files.length ? tState.files : clips.map(c => c.file);
+}
+function syncTranscribeUI() {
+  const cfg = transcribeCfg();
+  $("tUseConvertVideo").style.display = clips.length ? "" : "none";
+  const haveVideo = tEffectiveFiles().length > 0;
+  $("tStart").disabled = !(CONFIG && cfg.available && haveVideo) || !!tState.jobId;
+  if (CONFIG && !cfg.available) {
+    $("tStatus").textContent = "Transcription tools not installed — run scripts/setup-tools.sh --transcribe and restart the server.";
+  }
+}
+$("tVideoFile").addEventListener("change", () => {
+  const fs = [...$("tVideoFile").files].slice(0, maxClips());
+  if (fs.length) {
+    tState.files = fs;
+    $("tVideoInfo").textContent = fs.length === 1 ? fs[0].name
+      : `${fs.length} clips: ` + fs.map(f => f.name).join(", ");
+  }
+  syncTranscribeUI();
+});
+$("tUseConvertVideo").addEventListener("click", () => {
+  if (!clips.length) return;
+  tState.files = clips.map(c => c.file);
+  $("tVideoInfo").textContent = (clips.length === 1
+    ? (clips[0].file.name || "video")
+    : clips.length + " clips") + " (from Convert tab, same order)";
+  syncTranscribeUI();
+});
+
+const T_STAGE_LABEL = {
+  queued: "Queued (waiting for a free transcription slot)…",
+  extracting: "Extracting audio track…",
+  transcribing: "Transcribing locally (whisper)…",
+  diarizing: "Detecting speakers locally…",
+};
+
+$("tStart").addEventListener("click", async () => {
+  const files = tEffectiveFiles();
+  if (!files.length || !CONFIG) return;
+  $("tStart").disabled = true;
+  $("tBanner").className = "banner";
+  $("tChunks").innerHTML = "";
+  // Retained-by-default: don't discard typed scripts on a re-run — stash
+  // them so the "done" handler can carry them forward onto the new chunks
+  // by clip+position. "Clear all scripts" (below) is the explicit opt-out.
+  tState.prevChunks = tState.chunks;
+  tState.chunks = [];
+  try {
+    const capMB = (CONFIG && CONFIG.maxUploadMB) || 2048;
+    const totalBytes = files.reduce((s, f) => s + (f.size || 0), 0);
+    if (totalBytes > capMB * 1048576 * 0.98) {
+      throw new Error(`clips total ${(totalBytes / 1048576).toFixed(0)} MB — the server accepts ${capMB} MB per request and all clips share it`);
+    }
+    const fd = new FormData();
+    fd.append("settings", JSON.stringify({
+      speakersExpected: parseInt($("tSpeakers").value, 10) || 0,
+    }));
+    // One video part per clip → one whisper+diarization run per clip
+    // server-side, so speaker labels stay scoped to their clip.
+    files.forEach((f, i) => fd.append("video_" + i, f, "video_" + i));
+    const r = await fetch(api("/api/transcribe"), { method: "POST", body: fd });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    tState.jobId = data.id;
+    tState.clipCount = data.clipCount || files.length;
+    // Remember WHICH files (by identity) were transcribed, in order — the
+    // import step anchors chunks to Convert-tab clips by position, so a
+    // later reorder/replacement there must be detectable.
+    tState.srcSig = files.map(f => (f.name || "") + ":" + (f.size || 0));
+    dbg(`transcribe job accepted: ${data.id.slice(0, 8)} (${tState.clipCount} clip${tState.clipCount === 1 ? "" : "s"})`);
+    $("tCancel").style.display = "";
+    $("tStatus").textContent = T_STAGE_LABEL[data.state] || "Starting…";
+    tPoll();
+  } catch (e) {
+    dbg("transcribe start FAILED: " + e.message);
+    $("tBanner").className = "banner err";
+    $("tBanner").textContent = "Failed to start: " + e.message + " — “Export debug log” (bottom of page) captures a full trace.";
+    tState.jobId = null;
+    syncTranscribeUI();
+  }
+});
+
+$("tCancel").addEventListener("click", async () => {
+  const id = tState.jobId;
+  tStopPoll();
+  $("tBanner").className = "banner warn";
+  $("tBanner").textContent = "Cancelled.";
+  if (id) { try { await fetch(api("/api/transcribe/" + id), { method: "DELETE" }); } catch (e) { dbg("transcribe cancel DELETE failed: " + e.message); } }
+});
+
+$("tClearAll").addEventListener("click", () => {
+  if (!tState.chunks.length) return;
+  if (!confirm(`Clear ${tState.chunks.length} typed script${tState.chunks.length === 1 ? "" : "s"}? This can't be undone.`)) return;
+  tState.chunks.forEach(c => { c.script = ""; });
+  document.querySelectorAll("#tChunks textarea").forEach(ta => { ta.value = ""; });
+  saveTranscriptDraft();
+});
+
+$("tSaveNow").addEventListener("click", () => {
+  // Same defensive DOM-sync as the Import button (review finding: don't
+  // trust only the input-event-captured state) before writing the draft.
+  document.querySelectorAll("#tChunks .chunk textarea").forEach((ta, i) => {
+    if (tState.chunks[i]) tState.chunks[i].script = ta.value;
+  });
+  saveTranscriptDraft();
+});
+
+function tStopPoll() {
+  clearTimeout(tState.pollTimer);
+  tState.pollTimer = null;
+  tState.jobId = null;
+  $("tCancel").style.display = "none";
+  $("tStatus").textContent = "";
+  syncTranscribeUI();
+}
+
+async function tPoll() {
+  const myJob = tState.jobId;
+  if (!myJob) return;
+  try {
+    const r = await fetch(api("/api/transcribe/" + myJob), { cache: "no-store" });
+    if (tState.jobId !== myJob) return;
+    const s = await r.json();
+    if (tState.jobId !== myJob) return;
+    if (!r.ok) throw new Error(s.error || r.statusText);
+    if (s.state === "done") {
+      // DOM guard: a hostile/compromised transcription backend could return
+      // hundreds of thousands of tiny chunks; cap what we render.
+      const raw = (s.chunks || []).slice(0, 2000);
+      const capNote = (s.chunks || []).length > raw.length
+        ? ` (showing first ${raw.length} of ${s.chunks.length})` : "";
+      // Retained-by-default: carry prior scripts/include-flags forward onto
+      // the new chunks by (clip, position-within-clip) — a re-transcription
+      // usually produces chunks in the same relative order per clip even if
+      // exact timestamps drift slightly, and this is simpler and more
+      // predictable than fuzzy time-matching. Chunk counts changing per
+      // clip just means the tail either loses its old script (fewer new
+      // chunks) or starts blank (more new chunks) — "Clear all scripts" is
+      // the explicit way to start over cleanly instead.
+      const prevByClip = {};
+      (tState.prevChunks || []).forEach(c => {
+        (prevByClip[c.clip] = prevByClip[c.clip] || []).push(c);
+      });
+      const nextIdx = {};
+      tState.chunks = raw.map(c => {
+        const clip = c.clip || 0;
+        const i = nextIdx[clip] || 0;
+        nextIdx[clip] = i + 1;
+        const prev = prevByClip[clip] && prevByClip[clip][i];
+        return {
+          clip, speaker: c.speaker || "?", start: c.start, end: c.end,
+          text: c.text, wordCount: c.wordCount,
+          script: prev ? prev.script : "", include: prev ? prev.include : true,
+          source: c.source || "",
+        };
+      });
+      tState.prevChunks = null;
+      tState.clipCount = s.clipCount || 1;
+      renderChunks(myJob);
+      saveTranscriptDraft(); // durable immediately, before the user types anything
+      dbg(`transcribe done: ${tState.chunks.length} chunks`);
+      $("tBanner").className = "banner ok";
+      // Disclose the scene-cut/no-audio and unattributed-speaker fallbacks
+      // in the aggregate headline, not just in the per-chunk cards below
+      // (review finding) — a reader skimming just this banner shouldn't
+      // read "N dialogue chunks" as more real speech, or more real
+      // diarization, than actually exists.
+      const sceneCount = tState.chunks.filter(c => c.source === "scene").length;
+      const unattrCount = tState.chunks.filter(c => c.source === "unattributed").length;
+      const dialogueCount = tState.chunks.length - sceneCount - unattrCount;
+      const parts = [];
+      if (dialogueCount > 0 || (sceneCount === 0 && unattrCount === 0)) parts.push(`${dialogueCount} dialogue`);
+      if (sceneCount > 0) parts.push(`${sceneCount} scene-cut — no audio`);
+      if (unattrCount > 0) parts.push(`${unattrCount} unattributed speaker`);
+      const kindNote = (sceneCount > 0 || unattrCount > 0) ? ` (${parts.join(", ")})` : "";
+      $("tBanner").textContent = `Transcribed ${tState.chunks.length} chunks${kindNote}${capNote}. Write your script below, then hit “Import from Transcribe” on the Convert tab.`;
+      tStopPoll();
+      return;
+    }
+    if (s.state === "error") {
+      dbg("transcribe FAILED: " + s.error);
+      $("tBanner").className = "banner err";
+      $("tBanner").textContent = "Transcription failed: " + s.error + " — “Export debug log” (bottom of page) captures a full trace.";
+      tStopPoll();
+      return;
+    }
+    if (s.state === "cancelled") { tStopPoll(); return; }
+    let label = T_STAGE_LABEL[s.state] || s.state;
+    if ((s.clipCount || 1) > 1) {
+      label += ` — clip ${Math.min((s.clipsDone || 0) + 1, s.clipCount)}/${s.clipCount}`;
+    }
+    if ($("tStatus").textContent !== label) dbg("transcribe stage: " + s.state + " (" + (s.clipsDone || 0) + "/" + (s.clipCount || 1) + " clips)");
+    $("tStatus").textContent = label;
+    tState.pollTimer = setTimeout(tPoll, 1000);
+  } catch (e) {
+    if (tState.jobId !== myJob) return;
+    dbg("transcribe poll FAILED: " + e.message);
+    $("tBanner").className = "banner err";
+    $("tBanner").textContent = "Lost contact with server: " + e.message + " — “Export debug log” (bottom of page) captures a full trace.";
+    tStopPoll();
+  }
+}
+
+function renderChunks(jobId) {
+  const el = $("tChunks");
+  el.innerHTML = "";
+  tState.chunks.forEach((c, i) => {
+    const card = document.createElement("div"); card.className = "chunk";
+
+    const img = document.createElement("img");
+    img.loading = "lazy";
+    img.alt = "scene at " + fmtT(c.start) + (tState.clipCount > 1 ? ` in clip ${c.clip + 1}` : "");
+    img.src = api(`/api/transcribe/${jobId}/thumb?clip=${c.clip}&t=${((c.start + c.end) / 2).toFixed(2)}`);
+    // Job dirs are swept after ~2h; hide dead thumbnails instead of showing
+    // broken-image icons (review finding).
+    img.addEventListener("error", () => { img.style.display = "none"; });
+
+    const isScene = c.source === "scene";
+    const isUnattributed = c.source === "unattributed";
+    const meta = document.createElement("div"); meta.className = "meta";
+    const sp = document.createElement("span");
+    sp.className = "speaker" + (isScene || isUnattributed ? " scene" : "");
+    // Speaker labels are PER-CLIP (each clip is its own transcription+
+    // diarization run): "Clip 2 · Speaker A" ≠ clip 1's "Speaker A".
+    // Scene-cut chunks (no audio track — scenedetect.go's fallback) get a
+    // distinct "Scene cut" badge instead of a speaker label. "Unattributed"
+    // chunks (real transcribed speech, but diarization found zero speaker
+    // segments — localasr.go's assignSpeakers default) get a badge that
+    // doesn't claim real diarization, since "Speaker A" there is a stand-in,
+    // not a diarization result (review finding).
+    const clipPrefix = tState.clipCount > 1 ? `Clip ${c.clip + 1} · ` : "";
+    const badgeText = isScene ? "Scene cut" : isUnattributed ? "Speaker (unclear)" : "Speaker " + c.speaker;
+    sp.textContent = clipPrefix + badgeText;
+    if (isUnattributed) sp.title = "Diarization couldn't distinguish speakers for this clip — the text is real, the speaker label isn't.";
+    const tm = document.createElement("span"); tm.textContent = fmtT(c.start) + " – " + fmtT(c.end);
+    const wc = document.createElement("span"); wc.className = "wc";
+    wc.textContent = isScene ? "no audio" : c.wordCount + (c.wordCount === 1 ? " word" : " words");
+    const inc = document.createElement("label");
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = c.include;
+    cb.addEventListener("change", () => { c.include = cb.checked; saveTranscriptDraft(); });
+    inc.append(cb, " include");
+    const clearOne = document.createElement("button");
+    clearOne.type = "button"; clearOne.className = "secondary tClearOne";
+    clearOne.textContent = "Clear";
+    clearOne.title = "Clear just this chunk's script (try another punchline)";
+    meta.append(sp, tm, wc, inc, clearOne);
+
+    const orig = document.createElement("div"); orig.className = "orig";
+    if (isScene) {
+      orig.classList.add("empty");
+      orig.textContent = "(no audio — write your caption for this scene)";
+    } else {
+      // Unattributed chunks still show the real transcribed text — only the
+      // speaker attribution is a stand-in, not the content.
+      orig.textContent = c.text;
+    }
+
+    const ta = document.createElement("textarea");
+    ta.placeholder = "Your script for this chunk (leave blank to keep the original line)";
+    // Retained-by-default (v1.5): a re-transcription carries prior scripts
+    // forward by clip+position, so this must reflect c.script, not start
+    // blank, or the retained text would silently not display.
+    ta.value = c.script || "";
+    ta.addEventListener("input", () => { c.script = ta.value; scheduleTranscriptAutoSave(); });
+    clearOne.addEventListener("click", () => { c.script = ""; ta.value = ""; ta.focus(); saveTranscriptDraft(); });
+
+    // Thumbnail on the left as the visual cue; meta + words row + script
+    // row stacked on the right.
+    const body = document.createElement("div");
+    body.append(meta, orig, ta);
+    card.append(img, body);
+    el.appendChild(card);
+  });
+}
+
+/* ================== import into the Convert tab ================== */
+$("importBtn").addEventListener("click", () => {
+  const badge = $("importBadge");
+  const MAX_IMPORT_CHARS = 500; // mirrors the server's subtitle-cue cap
+  // Defensive re-sync from the live DOM before reading tState: the "input"
+  // event should already keep c.script current on every keystroke, but
+  // reading the textareas directly here means a click straight from typing
+  // (no intervening blur/change) can never lose text to an event-timing
+  // edge case — belt-and-suspenders against the exact bug class reported
+  // ("typed a script, switched tabs, import brought in nothing").
+  document.querySelectorAll("#tChunks .chunk textarea").forEach((ta, i) => {
+    if (tState.chunks[i]) tState.chunks[i].script = ta.value;
+  });
+  const usable = tState.chunks.filter(c =>
+    c.include && (c.script.trim() || c.text.trim()) && c.end > c.start);
+  if (!usable.length) {
+    badge.style.display = "";
+    badge.style.color = "var(--warn)"; badge.style.borderColor = "var(--warn)";
+    badge.textContent = tState.chunks.length
+      ? "nothing to import — every chunk is unchecked or empty; tick “include” on at least one"
+      : "nothing to import — run a transcription on the Transcribe tab first";
+    return;
+  }
+  // Chunk clip indices refer to the transcription's clip ORDER; they import
+  // onto the Convert tab's clips by position. Chunks pointing past the
+  // loaded clip count are skipped with an honest note.
+  let clipped = 0, orphaned = 0;
+  const imported = [];
+  for (const c of usable.slice(0, 1000)) { // server MaxCues
+    if (!clips[c.clip]) { orphaned++; continue; }
+    let text = (c.script.trim() || c.text.trim()).replace(/\s*\n\s*/g, " ");
+    if (text.length > MAX_IMPORT_CHARS) { text = text.slice(0, MAX_IMPORT_CHARS); clipped++; }
+    imported.push({ clip: c.clip, start: c.start, end: c.end, text, enabled: true });
+  }
+  cues = imported;
+  renderCueList();
+  updateEstimate();
+  const scripted = usable.filter(c => c.script.trim()).length;
+  $("subInfo").textContent = `${cues.length} captions from Transcribe`;
+  $("subWarnings").textContent = "";
+  badge.style.display = "";
+  badge.style.color = "var(--ok)"; badge.style.borderColor = "var(--ok)";
+  let msg = `✓ imported ${cues.length} chunks (${scripted} with your script, ${cues.length - scripted} original dialogue)`;
+  if (usable.length > 1000) msg += ` — first 1000 of ${usable.length} (server limit)`;
+  if (clipped) msg += ` — ${clipped} clipped to 500 chars`;
+  if (orphaned) {
+    msg += ` — ${orphaned} skipped (they belong to clip numbers not loaded on this tab)`;
+    badge.style.color = "var(--warn)"; badge.style.borderColor = "var(--warn)";
+  }
+  // Chunks anchor by POSITION; if the Convert tab's clips were reordered or
+  // swapped since transcription, captions would land on the wrong footage
+  // silently (review finding) — detect via the file-identity snapshot.
+  if (tState.srcSig) {
+    const nowSig = clips.map(c => (c.file.name || "") + ":" + (c.file.size || 0));
+    const moved = tState.srcSig.some((s, i) => i < nowSig.length && s !== nowSig[i]);
+    if (moved) {
+      msg += " — ⚠ clips differ from the transcribed set/order; captions anchor by clip position";
+      badge.style.color = "var(--warn)"; badge.style.borderColor = "var(--warn)";
+    }
+  }
+  badge.textContent = msg;
+  dbg("import: " + msg);
+});
+
+$("exportDebug").addEventListener("click", exportDebugLog);
+
+video.addEventListener("loadedmetadata", () => { syncResHeight(); syncTranscribeUI(); });
+</script>
+</body>
+</html>

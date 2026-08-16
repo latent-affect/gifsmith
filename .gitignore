@@ -1,0 +1,17 @@
+# fetched binaries (scripts/setup-tools.sh)
+/bin/*
+!/bin/.gitkeep
+# fetched fonts (scripts/fetch-fonts.sh)
+/fonts/*.ttf
+/fonts/*.woff2
+/fonts/OFL-*.txt
+# build & scratch
+/gifsmith-server
+/tmp/
+*.gif
+/.ffmpeg-src/
+
+# local dev tooling (hooks/settings), not part of the shipped project
+/.claude/
+/viz_validation/
+.warden/

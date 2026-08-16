@@ -1,0 +1,7 @@
+1
+00:00:00,500 --> 00:00:02,000
+When the build finally passes
+
+2
+00:00:02,000 --> 00:00:03,800
+and every test is green
