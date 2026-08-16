@@ -1,3 +1,11 @@
+//go:build ignore
+
+// Moved here, not deleted, when subtitle-file upload was removed (the
+// operator's own convention for flagged-for-deletion files). Excluded from
+// the build via this tag -- retained Go source under a non-package
+// directory still gets type-checked by `go build ./...`/`go vet ./...`
+// otherwise, which would break the build for a file nothing imports.
+
 package main
 
 import (

@@ -30,10 +30,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
-
-	"gifsmith/subtitle"
 )
 
 const AppVersion = "1.4.0"
@@ -48,9 +45,6 @@ type Server struct {
 	warnMB      float64
 	mux         *http.ServeMux
 	fontsDir    string // overridable via WithFontsDir; see main.go's defaultFontsDir
-
-	subMu    sync.Mutex
-	subTimes []time.Time // rolling window guarded by subMu, see checkSubtitleRate
 }
 
 func NewServer(tools *Tools, jobs *JobManager, maxUploadMB int64, warnMB float64) *Server {
@@ -65,7 +59,6 @@ func NewServer(tools *Tools, jobs *JobManager, maxUploadMB int64, warnMB float64
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
 	s.mux.HandleFunc("GET /fonts/{name}", s.handleFont)
 	s.mux.HandleFunc("GET /api/config", s.handleConfig)
-	s.mux.HandleFunc("POST /api/subtitles", s.handleSubtitles)
 	s.mux.HandleFunc("POST /api/jobs", s.handleCreateJob)
 	s.mux.HandleFunc("GET /api/jobs/{id}", s.handleJobStatus)
 	s.mux.HandleFunc("DELETE /api/jobs/{id}", s.handleJobCancel)
@@ -422,73 +415,6 @@ func (s *Server) handleTranscribeThumb(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	http.ServeFile(w, r, p)
-}
-
-// subtitleRateWindow/subtitleRateMaxPerWindow bound POST /api/subtitles the
-// same way every other resource-touching endpoint here already is (encode:
-// a 1-slot semaphore; transcribe: MaxRunningTJobs + an hourly budget;
-// reveal: CheckReveal's cooldown+window) — adversarial-review finding: this
-// endpoint had NO such protection despite doing real work (UTF-16/CP-1252
-// decoding, several regexp passes, a sort) on up to ~2 MB of attacker-
-// reachable input, entirely in-process, on every call. 20/10s is generous
-// for real interactive use (trying a few different subtitle files while
-// editing) while still bounding a hostile tight loop.
-const (
-	subtitleRateWindow       = 10 * time.Second // SWEPT: deliberate design choice, reasoned above, not sourced externally
-	subtitleRateMaxPerWindow = 20               // SWEPT: deliberate design choice, reasoned above, not sourced externally
-)
-
-// errSubtitleRateLimited is returned by checkSubtitleRate at the cap.
-var errSubtitleRateLimited = fmt.Errorf("subtitle parse rate limit reached (%d/%.0fs); wait a moment and try again", subtitleRateMaxPerWindow, subtitleRateWindow.Seconds())
-
-// checkSubtitleRate enforces subtitleRateMaxPerWindow within subtitleRateWindow,
-// mirroring JobManager.CheckReveal's rolling-window pattern (jobs.go).
-func (s *Server) checkSubtitleRate() error {
-	now := time.Now()
-	s.subMu.Lock()
-	defer s.subMu.Unlock()
-	keep := s.subTimes[:0]
-	for _, t := range s.subTimes {
-		if now.Sub(t) < subtitleRateWindow {
-			keep = append(keep, t)
-		}
-	}
-	s.subTimes = keep
-	if len(s.subTimes) >= subtitleRateMaxPerWindow {
-		return errSubtitleRateLimited
-	}
-	s.subTimes = append(s.subTimes, now)
-	return nil
-}
-
-func (s *Server) handleSubtitles(w http.ResponseWriter, r *http.Request) {
-	if err := s.checkSubtitleRate(); err != nil {
-		httpError(w, http.StatusTooManyRequests, "%v", err)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, subtitle.MaxFileBytes+4096)
-	if err := r.ParseMultipartForm(subtitle.MaxFileBytes + 4096); err != nil {
-		httpError(w, http.StatusBadRequest, "invalid upload: %v", errBrief(err))
-		return
-	}
-	defer cleanupMultipart(r)
-	f, _, err := r.FormFile("file")
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "missing form file %q", "file")
-		return
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, subtitle.MaxFileBytes+1))
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "reading upload: %v", errBrief(err))
-		return
-	}
-	res, err := subtitle.Parse(data)
-	if err != nil {
-		httpError(w, http.StatusUnprocessableEntity, "%v", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, res)
 }
 
 // createJobRequest is the "settings" JSON field of the multipart body.

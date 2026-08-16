@@ -171,14 +171,13 @@
     </div>
 
     <div class="panel" style="margin-top:18px">
-      <h2>2 · Captions (subtitle file or Transcribe tab)</h2>
-      <div class="row">
-        <input type="file" id="subFile" accept=".srt,.vtt,text/vtt,application/x-subrip">
-        <span class="small" id="subInfo"></span>
-      </div>
+      <h2>2 · Captions (from Transcribe)</h2>
       <div class="row">
         <button class="secondary" id="importBtn" title="Load the dialogue chunks (your script where filled in) from the Transcribe tab">⇘ Import from Transcribe</button>
         <span id="importBadge"></span>
+      </div>
+      <div class="row">
+        <span class="small" id="subInfo"></span>
       </div>
       <div class="warnings" id="subWarnings"></div>
       <div id="cueList"></div>
@@ -753,36 +752,6 @@ function drawPreview() {
     drawCaption(pctx, W, vidH, barPx, canvasH, q.text);
   }
 }
-
-/* ---------- subtitles ---------- */
-$("subFile").addEventListener("change", async () => {
-  const f = $("subFile").files[0];
-  if (!f) return;
-  $("subInfo").textContent = "parsing…";
-  const fd = new FormData();
-  fd.append("file", f);
-  try {
-    const r = await fetch(api("/api/subtitles"), { method: "POST", body: fd });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || r.statusText);
-    // Subtitle-file times are source times in CLIP 1 (a subtitle file
-    // belongs to one source video). Captions over later clips come from the
-    // Transcribe tab or inline edits.
-    cues = data.cues.map(c => ({ clip: 0, start: c.start, end: c.end, text: c.text.replace(/\n/g, " "), enabled: true }));
-    dbg(`subtitles parsed: ${data.format} ${cues.length} cues, ${(data.warnings || []).length} warnings`);
-    $("importBadge").style.display = "none"; // subtitle file replaces any transcribe import
-    $("subInfo").textContent = `${data.format.toUpperCase()} · ${cues.length} cues` +
-      (clips.length > 1 ? " · times apply to clip 1" : "");
-    $("subWarnings").textContent = (data.warnings || []).join("\n");
-    renderCueList(); updateConvertEnabled();
-  } catch (e) {
-    cues = []; renderCueList();
-    dbg("subtitle parse FAILED: " + e.message);
-    $("subInfo").textContent = "";
-    $("subWarnings").textContent = "Could not parse: " + e.message + (CONFIG ? "" : " (server offline?)");
-    updateConvertEnabled();
-  }
-});
 
 function renderCueList() {
   const el = $("cueList");

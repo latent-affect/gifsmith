@@ -5,7 +5,8 @@
 │ frontend/index.html  (single file; served at / or from file://)│
 │                                                                │
 │  <video> preview ── canvas overlay (live caption preview)      │
-│  subtitle file ──► POST /api/subtitles ──► cue list (editable) │
+│  video ──► POST /api/transcribe ──► dialogue chunks OR         │
+│            (no audio track) scene-cut chunks ──► cue list      │
 │  cue text ──► canvas render ──► one transparent PNG per cue    │
 │  settings + video + cue PNGs ──► POST /api/jobs                │
 │  poll GET /api/jobs/{id} ──► download /api/jobs/{id}/result    │
@@ -14,7 +15,8 @@
 ┌─────────────────────────── server ─────────────────────────────┐
 │ Go stdlib only.  main.go / server.go / jobs.go / pipeline.go   │
 │                                                                │
-│  /api/subtitles → subtitle.Parse (tolerant SRT/VTT)            │
+│  /api/transcribe → whisper.cpp + sherpa-onnx diarization, or   │
+│                    scenedetect.go's scdet fallback if no audio │
 │  /api/jobs      → stream parts to per-job 0700 dir             │
 │                   → ffprobe validate → JobSpec.Validate        │
 │                   → job queue (1 encode at a time)             │
@@ -33,7 +35,7 @@
 
 ## The caption mechanism ("change when the video changes")
 
-Captions are **timestamp-driven**: each subtitle cue becomes one full-canvas
+Captions are **timestamp-driven**: each cue becomes one full-canvas
 transparent PNG rendered by the *browser* (WYSIWYG — the preview and the
 output share the drawing code) and composited by FFmpeg's `overlay` filter
 gated with `enable='between(t,start,end)'`. At each cue boundary the active
@@ -123,7 +125,6 @@ the ID regexp (`^[a-f0-9]{32}$`) is the only path component ever used.
 | `GET /` | — | the UI |
 | `GET /fonts/{name}` | — | allow-listed OFL font files (if fetched) |
 | `GET /api/config` | — | versions, warn threshold, platform table, limits |
-| `POST /api/subtitles` | multipart `file` | `{format, cues[], warnings[]}` |
 | `POST /api/jobs` | multipart `settings` JSON + `video_0…video_N` (≤8; `video` = clip 0) + `cue_N` PNGs | `202 {id, estimateBytes}` |
 | `GET /api/jobs/{id}` | — | state/progress/size |
 | `DELETE /api/jobs/{id}` | — | cancel + cleanup |

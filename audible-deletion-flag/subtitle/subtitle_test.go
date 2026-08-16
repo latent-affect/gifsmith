@@ -1,3 +1,8 @@
+//go:build ignore
+
+// Moved here, not deleted, when subtitle-file upload was removed. See
+// subtitle.go's matching header in this same retained directory.
+
 package subtitle
 
 import (

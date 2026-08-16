@@ -484,23 +484,12 @@ func TestAPIEndToEnd(t *testing.T) {
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
-	// 1. Parse a subtitle file.
-	var sb bytes.Buffer
-	mw := multipart.NewWriter(&sb)
-	fw, _ := mw.CreateFormFile("file", "subs.srt")
-	_, _ = fw.Write([]byte("1\n00:00:01,000 --> 00:00:02,000\nHELLO MEME\n\n2\n00:00:02,500 --> 00:00:03,400\nSECOND CAPTION\n"))
-	mw.Close()
-	resp, err := http.Post(ts.URL+"/api/subtitles", mw.FormDataContentType(), &sb)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var subRes struct {
-		Cues []struct{ Start, End float64 } `json:"cues"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&subRes); err != nil || len(subRes.Cues) != 2 {
-		t.Fatalf("subtitle parse via API failed: %v (%d cues)", err, len(subRes.Cues))
-	}
-	resp.Body.Close()
+	// 1. A single cue's timing. Captions come from local transcription (or
+	// scene-cut detection for silent clips) now, not subtitle-file upload
+	// (removed -- see audible-deletion-flag/subtitle/), so this test only
+	// needs one representative (start, end) pair to exercise job submission
+	// and rendering below; it never routed through the parser itself.
+	cueStart, cueEnd := 1.0, 2.0
 
 	// 2. Submit a job with one rendered cue PNG (240x134 canvas).
 	cuePath := makeCuePNG(t, dir, "cue0.png", 240, 134, color.RGBA{255, 0, 0, 255})
@@ -509,7 +498,7 @@ func TestAPIEndToEnd(t *testing.T) {
 	settings := map[string]any{
 		"trimStart": 0.5, "trimEnd": 3.5, "width": 240, "fps": 10,
 		"style": "classic", "encoder": "ffmpeg", "dither": "bayer",
-		"cues": []map[string]float64{{"start": subRes.Cues[0].Start, "end": subRes.Cues[0].End}},
+		"cues": []map[string]float64{{"start": cueStart, "end": cueEnd}},
 	}
 	sj, _ := json.Marshal(settings)
 	_ = jw.WriteField("settings", string(sj))
@@ -521,7 +510,7 @@ func TestAPIEndToEnd(t *testing.T) {
 	_, _ = cw.Write(cb)
 	jw.Close()
 
-	resp, err = http.Post(ts.URL+"/api/jobs", jw.FormDataContentType(), &jb)
+	resp, err := http.Post(ts.URL+"/api/jobs", jw.FormDataContentType(), &jb)
 	if err != nil {
 		t.Fatal(err)
 	}

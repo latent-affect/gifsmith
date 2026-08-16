@@ -1,8 +1,11 @@
 # GIFsmith
 
-Point it at a video and a subtitle file, and GIFsmith burns in captions that
-change exactly when the dialogue does. No timestamp guesswork, no dragging
-text boxes around a timeline by hand.
+Point it at a video. GIFsmith transcribes the dialogue itself, or — if the
+clip has no audio at all — finds the actual scene cuts and gives you a blank
+row at each one. Either way you get real, locally-computed timing to write
+your captions against, not a timeline you're dragging text boxes around by
+hand and not someone else's subtitle file that may or may not line up with
+what's actually on screen.
 
 Everything happens on your machine, transcription included. No signup
 screen, no cloud queue, no watermark you have to pay to remove. Just a small
@@ -15,29 +18,29 @@ together.
 
 ## Features
 
-- **Subtitle-timed captions.** Upload an `.srt` or `.vtt` and every cue
-  becomes a caption burned in for exactly its time window, no more, no less.
-  The parser has seen real subtitle files in the wild and doesn't flinch:
-  BOMs, CRLF, Windows-1252 or UTF-16 encodings, broken indices, comma-or-dot
-  milliseconds, stray HTML tags someone left in by accident.
+- **Every caption comes from the video itself — that's the whole point.**
+  There's no "upload a subtitle file" path. GIFsmith won't take someone
+  else's timing on faith, because there's no way to guarantee an arbitrary
+  `.srt` actually matches the cuts in *this* encode of *this* clip, and a
+  caption that drifts from what's on screen is exactly the kind of
+  confident-looking-but-wrong output this tool exists to not produce. The
+  Transcribe tab runs [whisper.cpp] for local speech-to-text with word
+  timestamps and [sherpa-onnx] for local who-spoke-when diarization, both
+  pinned binaries — your audio never leaves your machine, no API, no
+  account, no key. If a clip has no audio track at all, there's nothing for
+  whisper to transcribe, so GIFsmith falls back to FFmpeg's own scene-cut
+  detection and hands you a blank row at every camera cut instead of a dead
+  end — still derived from the actual footage, never a file you'd have to
+  trust. `scripts/setup-tools.sh --transcribe` fetches the binaries and
+  diarization models once, with hard SHA-256 pins (the whisper model is
+  checked against upstream's published hash, and you can pin your own via
+  `WHISPER_MODEL_SHA256`). After that, it's offline for good.
 - **Multi-clip (v1.3).** Stitch up to 8 clips into one GIF, each trimmed on
   its own. Clip 1 sets the canvas; anything with a different aspect ratio
   letterboxes to fit, and captions stay anchored to their clip through trims
   and reorders. Transcription runs one whisper-plus-diarization pass per
   clip, so speaker labels don't wander ("Clip 2 · Speaker A" stays put, it
   doesn't bleed into Clip 3).
-- **Fully local transcription (v1.4), with a fallback for silent clips.**
-  The Transcribe tab runs [whisper.cpp] for speech-to-text with word
-  timestamps and [sherpa-onnx] for who-spoke-when diarization, both as
-  pinned local binaries. Your audio never leaves your machine: no API, no
-  account, no key, no HuggingFace token to forget you have. If a clip has
-  no audio track at all, there's nothing for whisper to transcribe, so
-  GIFsmith falls back to FFmpeg's own scene-cut detection and hands you a
-  blank row at every camera cut instead of a dead end. `scripts/setup-tools.sh
-  --transcribe` fetches the binaries and diarization models once, with hard
-  SHA-256 pins (the whisper model is checked against upstream's published
-  hash, and you can pin your own via `WHISPER_MODEL_SHA256`). After that,
-  it's offline for good.
 - **Two caption styles, and what you see is what you get.** Classic meme
   (white Anton or Impact, black outline, top or bottom) or a caption bar
   above or below the frame. The browser renders the exact pixels that get
@@ -134,9 +137,9 @@ job, since you're going to replace the words anyway; the timestamps are the
 part that matters. On the Convert tab, **Import from Transcribe** pulls the
 chunks straight into the cue list, no file in between: your script wherever
 you wrote one, the original transcribed line wherever you didn't, with a
-green badge confirming what got imported. From there it behaves exactly
-like an uploaded `.srt`, editable inline, previewable per cue, burned in on
-convert. After converting, you get the actual GIF file size, the
+green badge confirming what got imported. From there it's editable inline,
+previewable per cue, burned in on convert — the only path captions take
+into a GIF. After converting, you get the actual GIF file size, the
 per-platform autoplay verdicts, and a **Resolution** preset or **Auto-fit ≤
 warn** button that picks a width to keep longer clips under the size
 threshold.
@@ -152,8 +155,9 @@ the AssemblyAI API. That entire egress path is gone as of v1.4.)
 ## Using it (Convert)
 
 1. Choose a video. Trim with the ⇤/⇥ buttons if you want a section.
-2. Choose a subtitle file. Cues appear in a list: edit text inline, untick
-   cues you don't want, click a timestamp to preview that moment.
+2. Head to the Transcribe tab, run it, then **Import from Transcribe**.
+   Cues appear in a list: edit text inline, untick cues you don't want,
+   click a timestamp to preview that moment.
 3. Pick a style (classic or bar), position, font, size, outline.
 4. Pick width, fps, and encoder, and watch the size estimate and platform
    chips update.
@@ -187,12 +191,14 @@ nothing gives.
 
 | path | what |
 |---|---|
-| `main.go` `server.go` `jobs.go` `pipeline.go` `estimate.go` | Go server (stdlib only) |
-| `subtitle/` | tolerant SRT/VTT parser + table tests |
+| `main.go` `server.go` `jobs.go` `pipeline.go` `estimate.go` `debuglog.go` | Go server core (stdlib only) |
+| `transcribe.go` `localasr.go` `scenedetect.go` | Transcribe tab: whisper.cpp + sherpa-onnx diarization, and the scene-cut fallback for silent clips -- the only two caption sources |
+| `gifmeta.go` | strips gifski's/FFmpeg's GIF Comment Extension metadata from encoder output |
 | `frontend/index.html` | the whole UI, single file, no build step, no JS deps |
 | `scripts/` | pinned toolchain fetcher, font fetcher |
 | `docs/` | architecture, CVE audit, sourced domain briefing (platform limits, size-estimate constants) |
-| `testdata/` | sample subtitle file |
+| `testdata/` | sample multi-speaker audio for diarization tests |
+| `audible-deletion-flag/` | retired code, kept not deleted (the subtitle-file-upload parser + its tests, removed in favor of transcription/scene-cut-only captioning) |
 
 ## Security posture (short version; full audit in docs/CVE-AUDIT.md)
 
@@ -203,7 +209,7 @@ nothing gives.
   touch a path directly, and jobs live in per-job `0700` temp dirs keyed by
   crypto-random IDs.
 - Filter graphs go through `-filter_complex_script` files, so a 1000-cue
-  subtitle file can't overflow a command line or sneak filter syntax in
+  caption list can't overflow a command line or sneak filter syntax in
   sideways.
 - Upload caps, per-part caps, PNG magic-byte checks, and ffprobe validation,
   all before anything gets decoded.
