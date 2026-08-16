@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GIFsmith: the caption lands on the word</title>
+<style>
+  :root {
+    --ink:       #1B1512;
+    --paper:     #EDE6D6;
+    --safelight: #C4402A;
+    --cue:       #E7B23D;
+    --frame:     #4A8572;
+    --wire:      #8C8271;
+
+    --display: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --body:    ui-serif, Georgia, "Times New Roman", serif;
+    --mono:    ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { color-scheme: dark; }
+
+  body {
+    margin: 0;
+    background: var(--ink);
+    color: var(--paper);
+    font-family: var(--body);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--cue); }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--cue);
+    outline-offset: 3px;
+  }
+
+  .wrap {
+    max-width: 46rem;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+  }
+
+  .eyebrow {
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: 0.72rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--wire);
+  }
+
+  hr.wire {
+    border: none;
+    border-top: 1px solid rgba(140, 130, 113, 0.35);
+    margin: 3.5rem 0;
+  }
+
+  /* ---------- hero ---------- */
+
+  .hero {
+    padding: 4.5rem 0 3rem;
+    text-align: center;
+  }
+
+  .hero .eyebrow { margin-bottom: 1.1rem; }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: -0.01em;
+    font-size: clamp(2rem, 6vw, 3.4rem);
+    line-height: 1.05;
+    margin: 0 0 1.1rem;
+  }
+
+  h1 .accent { color: var(--cue); }
+
+  .subhead {
+    font-family: var(--body);
+    font-size: clamp(1rem, 2.4vw, 1.15rem);
+    color: var(--paper);
+    opacity: 0.86;
+    max-width: 34rem;
+    margin: 0 auto 2.6rem;
+  }
+
+  /* ---------- live demo (signature element) ---------- */
+
+  .demo {
+    position: relative;
+    max-width: 34rem;
+    margin: 0 auto 2.6rem;
+    padding: 2rem 1.25rem 2.4rem;
+    background: rgba(237, 230, 214, 0.03);
+    border: 1px solid rgba(140, 130, 113, 0.3);
+    border-radius: 4px;
+  }
+
+  .demo-label {
+    position: absolute;
+    top: -0.6rem;
+    left: 1.25rem;
+    background: var(--ink);
+    padding: 0 0.5rem;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    color: var(--wire);
+  }
+
+  .waveform {
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 2px;
+    height: 64px;
+    margin-bottom: 1.4rem;
+  }
+
+  .waveform span {
+    flex: 1;
+    background: var(--wire);
+    opacity: 0.55;
+    border-radius: 1px;
+  }
+
+  .playhead {
+    position: absolute;
+    top: -0.6rem;
+    bottom: -1.4rem;
+    left: 0;
+    width: 2px;
+    background: var(--safelight);
+    animation: sweep 8s linear infinite;
+  }
+
+  .playhead::before {
+    content: "";
+    position: absolute;
+    top: -4px;
+    left: -3px;
+    width: 8px;
+    height: 8px;
+    background: var(--safelight);
+    border-radius: 50%;
+  }
+
+  @keyframes sweep {
+    0%   { left: 0%; }
+    100% { left: 100%; }
+  }
+
+  .captions {
+    position: relative;
+    height: 2.6rem;
+  }
+
+  .caption {
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    font-family: var(--display);
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-size: 1.1rem;
+    color: var(--ink);
+    background: var(--cue);
+    padding: 0.3rem 0.7rem;
+    border-radius: 2px;
+    opacity: 0;
+    white-space: nowrap;
+  }
+
+  .caption.c1 { left: 12%; animation: fade1 8s linear infinite; }
+  .caption.c2 { left: 50%; animation: fade2 8s linear infinite; }
+  .caption.c3 { left: 84%; animation: fade3 8s linear infinite; }
+
+  @keyframes fade1 {
+    0%, 4%   { opacity: 0; }
+    6%, 23%  { opacity: 1; }
+    26%, 100%{ opacity: 0; }
+  }
+  @keyframes fade2 {
+    0%, 40%  { opacity: 0; }
+    43%, 58% { opacity: 1; }
+    61%, 100%{ opacity: 0; }
+  }
+  @keyframes fade3 {
+    0%, 75%  { opacity: 0; }
+    78%, 94% { opacity: 1; }
+    97%, 100%{ opacity: 0; }
+  }
+
+  .demo-caption-note {
+    margin-top: 1.6rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--wire);
+    text-align: left;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .playhead { animation: none; left: 50%; }
+    .caption { animation: none; opacity: 0; }
+    .caption.c2 { opacity: 1; }
+  }
+
+  /* ---------- cta ---------- */
+
+  .cta {
+    display: inline-block;
+    font-family: var(--display);
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.85rem;
+    text-decoration: none;
+    color: var(--ink);
+    background: var(--cue);
+    padding: 0.85rem 1.6rem;
+    border-radius: 2px;
+    transition: transform 0.15s ease;
+  }
+  .cta:hover { transform: translateY(-2px); }
+  .cta:focus-visible { outline-offset: 4px; }
+
+  .cta-row { text-align: center; }
+  .cta-sub {
+    display: block;
+    margin-top: 0.9rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--wire);
+  }
+
+  /* ---------- pitch ---------- */
+
+  .pitch {
+    padding: 1rem 0 2rem;
+  }
+
+  .pitch p {
+    font-size: 1.08rem;
+    color: var(--paper);
+  }
+
+  .pitch p::first-letter {
+    font-family: var(--display);
+    font-weight: 900;
+    font-size: 3.2rem;
+    float: left;
+    line-height: 0.8;
+    padding: 0.1rem 0.5rem 0 0;
+    color: var(--cue);
+  }
+
+  .pitch strong { color: var(--cue); font-weight: 700; }
+
+  /* ---------- filmstrip ---------- */
+
+  .filmstrip-head { margin-bottom: 0.5rem; }
+
+  h2 {
+    font-family: var(--display);
+    font-weight: 900;
+    text-transform: uppercase;
+    font-size: clamp(1.3rem, 3.4vw, 1.7rem);
+    letter-spacing: -0.01em;
+    margin: 0.4rem 0 0.4rem;
+  }
+
+  .filmstrip-sub {
+    color: var(--wire);
+    font-size: 0.95rem;
+    margin: 0 0 2rem;
+  }
+
+  .frames {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: rgba(140, 130, 113, 0.3);
+    border: 1px solid rgba(140, 130, 113, 0.3);
+  }
+
+  .frame {
+    position: relative;
+    display: grid;
+    grid-template-columns: 3.4rem 6.5rem 1fr;
+    gap: 1rem;
+    align-items: baseline;
+    background: var(--ink);
+    padding: 0.95rem 1rem 0.95rem 1.4rem;
+  }
+
+  .frame::before,
+  .frame::after {
+    content: "";
+    position: absolute;
+    left: 0.4rem;
+    width: 5px;
+    height: 5px;
+    background: var(--wire);
+    border-radius: 50%;
+    opacity: 0.5;
+  }
+  .frame::before { top: 0.5rem; }
+  .frame::after   { bottom: 0.5rem; }
+
+  .frame-num {
+    font-family: var(--mono);
+    color: var(--safelight);
+    font-size: 0.85rem;
+  }
+
+  .frame-tag {
+    font-family: var(--display);
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.78rem;
+    color: var(--frame);
+  }
+
+  .frame-fact {
+    font-size: 0.94rem;
+    color: var(--paper);
+    opacity: 0.9;
+  }
+
+  @media (max-width: 34rem) {
+    .frame {
+      grid-template-columns: 2.6rem 1fr;
+      row-gap: 0.25rem;
+    }
+    .frame-fact { grid-column: 2; }
+  }
+
+  /* ---------- spec sheet ---------- */
+
+  .label-panel {
+    border: 1px solid rgba(140, 130, 113, 0.4);
+    padding: 1.6rem 1.6rem 1.8rem;
+    position: relative;
+  }
+
+  .label-corner {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border: 1px solid var(--wire);
+    opacity: 0.6;
+  }
+  .label-corner.tl { top: -1px; left: -1px; border-right: none; border-bottom: none; }
+  .label-corner.tr { top: -1px; right: -1px; border-left: none; border-bottom: none; }
+  .label-corner.bl { bottom: -1px; left: -1px; border-right: none; border-top: none; }
+  .label-corner.br { bottom: -1px; right: -1px; border-left: none; border-top: none; }
+
+  dl.spec {
+    margin: 0.6rem 0 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: 1.5rem;
+    row-gap: 0.65rem;
+    font-family: var(--mono);
+    font-size: 0.86rem;
+  }
+
+  dl.spec dt {
+    color: var(--wire);
+    letter-spacing: 0.04em;
+  }
+
+  dl.spec dd {
+    margin: 0;
+    color: var(--paper);
+  }
+
+  /* ---------- footer ---------- */
+
+  footer {
+    padding: 3rem 0 4rem;
+  }
+
+  .swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.9rem;
+    margin-bottom: 2rem;
+  }
+
+  .swatch {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--wire);
+  }
+
+  .swatch i {
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 2px;
+    border: 1px solid rgba(237, 230, 214, 0.2);
+  }
+
+  .closer {
+    font-family: var(--body);
+    font-style: italic;
+    color: var(--paper);
+    opacity: 0.85;
+    font-size: 1rem;
+    max-width: 30rem;
+    margin: 0 0 2rem;
+  }
+
+  .foot-links {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    color: var(--wire);
+  }
+
+  .foot-links a { color: var(--paper); }
+</style>
+</head>
+<body>
+
+  <main class="wrap">
+
+    <section class="hero">
+      <div class="eyebrow">GIFsmith, local-first GIF maker</div>
+      <h1>The caption lands<br>on <span class="accent">the word.</span></h1>
+      <p class="subhead">
+        Feed it a video and a subtitle file, or let it transcribe the dialogue
+        itself, entirely on your machine. Every caption fires exactly when
+        the line is spoken.
+      </p>
+
+      <div class="demo">
+        <span class="demo-label">LOOP · 8s · CUE TIMING</span>
+        <div class="waveform" aria-hidden="true">
+          <span style="height:22%"></span><span style="height:41%"></span><span style="height:68%"></span>
+          <span style="height:35%"></span><span style="height:52%"></span><span style="height:80%"></span>
+          <span style="height:44%"></span><span style="height:30%"></span><span style="height:58%"></span>
+          <span style="height:73%"></span><span style="height:38%"></span><span style="height:60%"></span>
+          <span style="height:26%"></span><span style="height:50%"></span><span style="height:90%"></span>
+          <span style="height:47%"></span><span style="height:33%"></span><span style="height:64%"></span>
+          <span style="height:40%"></span><span style="height:55%"></span><span style="height:28%"></span>
+          <span style="height:62%"></span><span style="height:45%"></span><span style="height:75%"></span>
+          <span style="height:36%"></span><span style="height:58%"></span><span style="height:82%"></span>
+          <span style="height:31%"></span><span style="height:53%"></span><span style="height:24%"></span>
+          <span style="height:66%"></span><span style="height:42%"></span><span style="height:57%"></span>
+          <span style="height:29%"></span><span style="height:71%"></span><span style="height:48%"></span>
+          <span style="height:35%"></span><span style="height:60%"></span><span style="height:20%"></span>
+          <span style="height:54%"></span>
+          <span class="playhead" aria-hidden="true"></span>
+        </div>
+        <div class="captions" aria-hidden="true">
+          <span class="caption c1">SO</span>
+          <span class="caption c2">WE</span>
+          <span class="caption c3">SHIPPED</span>
+        </div>
+        <p class="demo-caption-note">^ this loop is real CSS, not a screenshot. The timing logic in the actual product runs on your subtitle file or a local speech model, not on a fixed clock like this one.</p>
+      </div>
+
+      <div class="cta-row">
+        <a class="cta" href="https://github.com/latent-affect/gifsmith">Clone it &amp; run it</a>
+        <span class="cta-sub">github.com/latent-affect/gifsmith &middot; MIT</span>
+      </div>
+    </section>
+
+    <hr class="wire">
+
+    <section class="pitch">
+      <p>
+        GIFsmith turns a video into a GIF where the captions land exactly
+        when people actually speak. Feed it an <strong>.srt</strong> or
+        <strong>.vtt</strong>, or let local whisper.cpp and sherpa-onnx
+        transcribe and diarize your clip on-device, speaker labels and all,
+        as a timing scaffold you edit into your own lines. Each caption
+        fires and cuts precisely on cue, not eyeballed. Stitch up to eight
+        clips into one GIF, pick classic meme style or a caption bar,
+        preview the exact pixels before you commit, and get real
+        per-platform autoplay-size verdicts for X, Discord, Tumblr, GIPHY,
+        and Mastodon instead of guessing whether your GIF will even play.
+        The whole thing runs on your machine: a Go server bound to
+        <strong>127.0.0.1</strong> with zero network egress, so nothing you
+        upload to it ever leaves your computer, unlike basically every
+        web-based GIF or caption tool. It's free, open source, has zero
+        third-party Go dependencies and zero JS dependencies, and produces
+        byte-identical output for the same input every time. If you've ever
+        hand-timed captions to dialogue in a video editor, this does that
+        part for you. Locally. Privately. For free.
+      </p>
+    </section>
+
+    <hr class="wire">
+
+    <section class="filmstrip">
+      <div class="filmstrip-head">
+        <div class="eyebrow">Before asking anyone to click anything</div>
+        <h2>Every step, run for real.</h2>
+      </div>
+      <p class="filmstrip-sub">No claim below is theoretical. Each one was run today, in order, starting from an empty directory.</p>
+
+      <div class="frames">
+        <div class="frame">
+          <span class="frame-num">01</span>
+          <span class="frame-tag">Clone</span>
+          <span class="frame-fact">Fresh clone into an empty temp directory. No shortcuts, no leftover state.</span>
+        </div>
+        <div class="frame">
+          <span class="frame-num">02</span>
+          <span class="frame-tag">Fetch</span>
+          <span class="frame-fact">Pinned ffmpeg and gifski fetched and checksum-verified by the setup script.</span>
+        </div>
+        <div class="frame">
+          <span class="frame-num">03</span>
+          <span class="frame-tag">Build</span>
+          <span class="frame-fact"><code>go build</code>. Zero errors, zero warnings.</span>
+        </div>
+        <div class="frame">
+          <span class="frame-num">04</span>
+          <span class="frame-tag">Test</span>
+          <span class="frame-fact">Full test suite green, both packages, run against the real binaries.</span>
+        </div>
+        <div class="frame">
+          <span class="frame-num">05</span>
+          <span class="frame-tag">Convert</span>
+          <span class="frame-fact">A real browser drove a real conversion. A real GIF89a came out the other end.</span>
+        </div>
+        <div class="frame">
+          <span class="frame-num">06</span>
+          <span class="frame-tag">Harden</span>
+          <span class="frame-fact">A final adversarial security pass found two real issues. Both fixed and re-tested before anyone outside this saw the code.</span>
+        </div>
+        <div class="frame">
+          <span class="frame-num">07</span>
+          <span class="frame-tag">Listen</span>
+          <span class="frame-fact">Whisper and diarization transcribed thirty real seconds of speech, on-device. Right words, right timestamps, zero network calls.</span>
+        </div>
+      </div>
+    </section>
+
+    <hr class="wire">
+
+    <section class="spec">
+      <div class="eyebrow">Read the label</div>
+      <h2>What's actually in it.</h2>
+      <div class="label-panel">
+        <span class="label-corner tl"></span><span class="label-corner tr"></span>
+        <span class="label-corner bl"></span><span class="label-corner br"></span>
+        <dl class="spec">
+          <dt>FORMAT</dt><dd>GIF89a</dd>
+          <dt>RUNTIME</dt><dd>127.0.0.1 only &middot; zero network egress</dd>
+          <dt>DEPENDENCIES</dt><dd>0 third-party Go packages &middot; 0 JS packages</dd>
+          <dt>ENCODERS</dt><dd>gifski &middot; ffmpeg palette pipeline</dd>
+          <dt>TRANSCRIPTION</dt><dd>whisper.cpp + sherpa-onnx, fully on-device</dd>
+          <dt>DETERMINISM</dt><dd>byte-identical output for the same input, every run</dd>
+          <dt>LICENSE</dt><dd>MIT</dd>
+          <dt>BUILD TIME</dt><dd>under 24 hours, one agentic coding session</dd>
+        </dl>
+      </div>
+    </section>
+
+    <footer>
+      <div class="swatches" aria-hidden="true">
+        <span class="swatch"><i style="background:#1B1512"></i>ink</span>
+        <span class="swatch"><i style="background:#EDE6D6"></i>paper</span>
+        <span class="swatch"><i style="background:#C4402A"></i>safelight</span>
+        <span class="swatch"><i style="background:#E7B23D"></i>cue</span>
+        <span class="swatch"><i style="background:#4A8572"></i>frame</span>
+        <span class="swatch"><i style="background:#8C8271"></i>wire</span>
+      </div>
+
+      <p class="closer">
+        Rumor has it that if this goes viral, it'll stress-test the internet
+        and put GIFs back to work as a real medium. We'd like to find out.
+      </p>
+
+      <p class="foot-links">
+        <a href="https://github.com/latent-affect/gifsmith">github.com/latent-affect/gifsmith</a>
+        &middot; MIT licensed &middot; six colors, like a good palette should have
+      </p>
+    </footer>
+
+  </main>
+
+</body>
+</html>

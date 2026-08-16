@@ -522,11 +522,43 @@ func Run(ctx context.Context, t *Tools, dir string, spec *JobSpec, probes []*Pro
 		}
 		ffArgs := append(append([]string{}, inputArgs...),
 			"-filter_complex_script", script, "-map", "[out]")
-		return runGifskiPath(ctx, t, spec, ffArgs, dur, outPath, cb)
+		if err := runGifskiPath(ctx, t, spec, ffArgs, dur, outPath, cb); err != nil {
+			return err
+		}
 	case "ffmpeg":
-		return runPalettePath(ctx, t, spec, dir, script, inputArgs, dur, outPath, cb)
+		if err := runPalettePath(ctx, t, spec, dir, script, inputArgs, dur, outPath, cb); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("unknown encoder %q", spec.Encoder)
+	}
+
+	scrubOutputMetadata(outPath)
+	return nil
+}
+
+// scrubOutputMetadata strips GIF Comment Extension blocks (gifski's
+// hardcoded "gif.ski" tag; defense-in-depth against any future FFmpeg
+// default) from the finished file. This is metadata hygiene, not part of
+// the encode contract: a strip failure is logged and the file is left as
+// the encoder produced it rather than failing a conversion that otherwise
+// succeeded.
+func scrubOutputMetadata(outPath string) {
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		Debug.Add("pipeline", "metadata scrub: reading %s: %v", outPath, err)
+		return
+	}
+	cleaned, changed, err := stripGIFComments(data)
+	if err != nil {
+		Debug.Add("pipeline", "metadata scrub: %s: %v (left as-is)", outPath, err)
+		return
+	}
+	if !changed {
+		return
+	}
+	if err := os.WriteFile(outPath, cleaned, 0o600); err != nil {
+		Debug.Add("pipeline", "metadata scrub: writing %s: %v", outPath, err)
 	}
 }
 

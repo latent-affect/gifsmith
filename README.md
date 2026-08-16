@@ -1,57 +1,82 @@
 # GIFsmith
 
-Convert `.mp4` / `.mov` video into GIFs with **meme-style captions driven by a
-subtitle file** — the captions change exactly when the subtitle timestamps
-change. Runs **entirely on your machine** — including transcription: a small
-Go server (loopback only), a single-file HTML frontend, and zero network
-egress. Nothing you feed it goes anywhere.
+Point it at a video and a subtitle file, and GIFsmith burns in captions that
+change exactly when the dialogue does. No timestamp guesswork, no dragging
+text boxes around a timeline by hand.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit together.
+Everything happens on your machine, transcription included. No signup
+screen, no cloud queue, no watermark you have to pay to remove. Just a small
+Go server that only listens on loopback, a single HTML file for the UI, and
+zero network egress. Feed it a video, and nothing about that video goes
+anywhere else.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit
+together.
 
 ## Features
 
-- **Subtitle-timed captions** — upload an `.srt` or `.vtt`; each cue becomes a
-  caption overlay burned into the GIF for exactly its time window. The parser
-  tolerates real-world mess: BOMs, CRLF, Windows-1252/UTF-16 encodings, broken
-  indices, comma *or* dot milliseconds, embedded HTML tags.
-- **Multi-clip (v1.3)** — up to 8 clips, each trimmed independently, stitched
-  in order into one GIF. Clip 1 sets the canvas; different-aspect clips
-  letterbox to fit. Captions anchor to their clip and follow trims/reorders.
-  Transcription runs **one whisper+diarization pass per clip**, so speaker
-  labels stay scoped to their clip ("Clip 2 · Speaker A") instead of
-  bleeding across clips.
-- **Fully local transcription (v1.4)** — the Transcribe tab runs
-  [whisper.cpp] (speech→text, word timestamps) and [sherpa-onnx]
-  (who-spoke-when diarization) as pinned local binaries. **Your audio never
-  leaves your machine** — no API, no account, no key, no HuggingFace token.
-  Binaries and diarization models are fetched once by
-  `scripts/setup-tools.sh --transcribe` with hard SHA-256 pins; the whisper
-  model is verified against upstream's published hash (hard-pinnable via
-  `WHISPER_MODEL_SHA256`). Then everything runs offline.
-- **Two caption styles, WYSIWYG** — classic meme (white Anton/Impact with black
-  outline, top or bottom, over the video) or a caption bar (white/black bar
-  added above or below the frame). The browser renders the exact pixels that
-  get composited, so the preview cannot lie. Cue text is editable in the UI.
-- **Any size** — output width 16–3840 px (aspect preserved). FPS capped at 50
-  because browsers clamp GIF frame delays below 2 centiseconds to 100 ms — a
-  faster GIF would actually play *slower*.
-- **No hard duration cap, honest size warnings instead** — a warning fires when
-  the estimated or actual output exceeds the **30 MB** default threshold: the
-  mean of the GIF-autoplay upload limits verified from official platform docs
-  on 2026-08-05 (X 15, Discord 10, Tumblr 10, GIPHY 100, Mastodon 16). A
-  per-platform pass/fail table is shown after every encode. Threshold is
-  configurable (`-warn-mb`).
-- **Two encoders** — [gifski] (highest quality; per-frame palettes) and FFmpeg
-  `palettegen`/`paletteuse` (fast, smaller files, dither selectable). The
-  **encode path is byte-deterministic**, verified in this repo's test suite:
-  same input + same settings ⇒ identical bytes, no ML anywhere in it. (The
-  Transcribe tab is the one ML feature — reproducible run-to-run on the same
-  machine+model, but neural inference is not bit-exact across hardware, so
-  we don't claim it is. See docs/ARCHITECTURE.md §Determinism.)
-- **Minimal attack/audit surface** — the server is Go **standard library
-  only** (zero third-party Go dependencies). Media binaries are pinned and
-  checksum-verified by `scripts/setup-tools.sh`. Full audit:
-  [docs/CVE-AUDIT.md](docs/CVE-AUDIT.md).
+- **Subtitle-timed captions.** Upload an `.srt` or `.vtt` and every cue
+  becomes a caption burned in for exactly its time window, no more, no less.
+  The parser has seen real subtitle files in the wild and doesn't flinch:
+  BOMs, CRLF, Windows-1252 or UTF-16 encodings, broken indices, comma-or-dot
+  milliseconds, stray HTML tags someone left in by accident.
+- **Multi-clip (v1.3).** Stitch up to 8 clips into one GIF, each trimmed on
+  its own. Clip 1 sets the canvas; anything with a different aspect ratio
+  letterboxes to fit, and captions stay anchored to their clip through trims
+  and reorders. Transcription runs one whisper-plus-diarization pass per
+  clip, so speaker labels don't wander ("Clip 2 · Speaker A" stays put, it
+  doesn't bleed into Clip 3).
+- **Fully local transcription (v1.4), with a fallback for silent clips.**
+  The Transcribe tab runs [whisper.cpp] for speech-to-text with word
+  timestamps and [sherpa-onnx] for who-spoke-when diarization, both as
+  pinned local binaries. Your audio never leaves your machine: no API, no
+  account, no key, no HuggingFace token to forget you have. If a clip has
+  no audio track at all, there's nothing for whisper to transcribe, so
+  GIFsmith falls back to FFmpeg's own scene-cut detection and hands you a
+  blank row at every camera cut instead of a dead end. `scripts/setup-tools.sh
+  --transcribe` fetches the binaries and diarization models once, with hard
+  SHA-256 pins (the whisper model is checked against upstream's published
+  hash, and you can pin your own via `WHISPER_MODEL_SHA256`). After that,
+  it's offline for good.
+- **Two caption styles, and what you see is what you get.** Classic meme
+  (white Anton or Impact, black outline, top or bottom) or a caption bar
+  above or below the frame. The browser renders the exact pixels that get
+  composited into the GIF, so the preview isn't a polite suggestion, it's
+  the actual output. Cue text is editable right in the UI.
+- **Any size you want.** Output width runs 16 to 3840 px with aspect
+  preserved. FPS caps at 50, and that's not us being stingy: browsers clamp
+  GIF frame delays under 2 centiseconds to 100 ms, so a "faster" GIF past
+  that point actually plays slower. Better you hear it from us than find out
+  the hard way.
+- **No hard duration cap, just honest warnings.** GIFsmith flags it when the
+  estimated or actual output crosses a 30 MB default threshold, the mean of
+  the real GIF-autoplay upload limits we verified against official platform
+  docs on 2026-08-05 (X 15, Discord 10, Tumblr 10, GIPHY 100, Mastodon 16).
+  Every encode ends with a per-platform pass/fail table, so you know exactly
+  where your GIF will and won't autoplay. Threshold's configurable with
+  `-warn-mb` if you disagree with our math.
+- **Two encoders, your call.** [gifski] for the best quality via per-frame
+  palettes, or FFmpeg's `palettegen`/`paletteuse` for speed, smaller files,
+  and selectable dithering. The encode path is byte-deterministic and the
+  test suite proves it: same input, same settings, identical bytes, every
+  time, no ML anywhere near it. (The Transcribe tab is the one ML feature in
+  the whole app. It's reproducible run-to-run on the same machine and model,
+  but neural inference isn't bit-exact across hardware, so we're not going
+  to pretend it is. See docs/ARCHITECTURE.md §Determinism.)
+- **A small attack surface, on purpose.** The server is Go standard library
+  only, zero third-party Go dependencies. Every media binary is pinned and
+  checksum-verified by `scripts/setup-tools.sh`. Full writeup in
+  [docs/CVE-AUDIT.md](docs/CVE-AUDIT.md), if you enjoy reading about the
+  things that didn't go wrong.
+- **The output file doesn't rat you out.** GIF has no EXIF-style container
+  to leak into, so most tools are quiet by default, but we checked what
+  actually slips through anyway. Turns out gifski hardcodes a small
+  "gif.ski" comment tag into every file it writes, with no flag to turn it
+  off, so GIFsmith strips that (and any Comment Extension block either
+  encoder might ever add) after encoding, verified by hex-dumping real
+  output rather than taking anyone's word for it. No file paths, no machine
+  name, no software fingerprint. Post it wherever you want; the only thing
+  it says about where it came from is wherever you choose to put it.
 
 ## Quick start
 
@@ -71,65 +96,79 @@ go build -o gifsmith-server .
 #    or      frontend/index.html           (double-click; same file, CORS-ready)
 ```
 
-Windows: download the same archives manually (`win/gifski.exe` from the gifski
-1.34.0 release; a BtbN `win64-gpl` FFmpeg build), drop `ffmpeg.exe`,
-`ffprobe.exe`, `gifski.exe` into `bin\`, then `go build` as above.
+**Windows:** grab the archives by hand instead, `win/gifski.exe` from the
+gifski 1.34.0 release and a BtbN `win64-gpl` FFmpeg build. Drop
+`ffmpeg.exe`, `ffprobe.exe`, and `gifski.exe` into `bin\`, then `go build`
+same as above.
 
-Server flags: `-port` (default 8437), `-warn-mb` (default 30.2), `-max-upload-mb`
-(default 2048), `-tools` (binaries dir), `-fonts` (fetched-fonts dir, defaults
-to `fonts/` next to the binary — same convention as `-tools`), `-tmp` (work
-dir), `-whisper-model` (override the transcription model file). The server binds to
-**127.0.0.1 only** — it is not reachable from the network, and makes no
-outbound connections either.
+Server flags: `-port` (default 8437), `-warn-mb` (default 30.2),
+`-max-upload-mb` (default 2048), `-tools` (binaries dir), `-fonts`
+(fetched-fonts dir, defaults to `fonts/` next to the binary, same
+convention as `-tools`), `-tmp` (work dir), `-whisper-model` (override the
+transcription model file). The server binds to **127.0.0.1 only**: not
+reachable from the network, and it doesn't make outbound connections
+either.
 
-## Transcribe tab — dialogue → meme script (fully local since v1.4)
+## Transcribe tab: dialogue to meme script (fully local since v1.4)
 
-Upload a clip (or reuse the Convert tab's), and GIFsmith extracts the audio
-track and transcribes + diarizes it **on your machine**: whisper.cpp
-produces word-level timestamps, sherpa-onnx (pyannote-segmentation-3.0 +
-NeMo TitaNet embeddings) labels who spoke when, and a deterministic grouper
-turns that into dialogue chunks — a scene thumbnail above the transcribed
-words (with word count and clip-scoped speaker badge/timestamps), and a
-blank row where you write your own script for that moment.
+Upload a clip (or reuse the one from the Convert tab), and GIFsmith pulls
+the audio track and transcribes plus diarizes it on your machine.
+whisper.cpp produces word-level timestamps, sherpa-onnx
+(pyannote-segmentation-3.0 plus NeMo TitaNet embeddings) figures out who
+spoke when, and a deterministic grouper turns all of that into dialogue
+chunks: a scene thumbnail above the transcribed words, a word count and
+clip-scoped speaker badge with timestamps, and a blank row underneath where
+you write your own line for that moment.
 
-The transcribed text is a **timing scaffold, not a subtitle product**: it
-shows you where each line lands so you can write your own caption there.
-That design choice is why local whisper accuracy is enough — you're going
-to replace the words anyway, and the timestamps are what matter. On the
-Convert tab, **Import from Transcribe** pulls the chunks in as captions —
-your script where you wrote one, the original line where you didn't — with
-a green badge confirming what was imported. After converting you get the
-actual GIF file size plus the per-platform autoplay verdicts, and the
-**Resolution** presets / **Auto-fit ≤ warn** button pick a width that keeps
-longer clips under the size threshold.
+Silent clips get the same treatment instead of a rejection. When there's no
+audio track, GIFsmith runs FFmpeg's `scdet` filter to find the actual
+camera-cut timestamps in the footage and builds one blank row per cut, so
+you still get a timing scaffold positioned where something actually
+happens on screen, not just evenly-spaced guesses. Write your line, same as
+you would against a transcribed one.
 
-Setup: `scripts/setup-tools.sh --transcribe` (builds whisper.cpp at a
-pinned commit, fetches the sherpa-onnx binary and all model files with
-SHA-256 verification — about 200 MB once, then fully offline). Model size
-is `WHISPER_MODEL=base` by default; `small`/`medium` trade speed for
-accuracy. **Privacy: nothing leaves your machine — there is no network
-code in the transcribe path at all.** (v1.1–v1.3 used the AssemblyAI API;
-that entire egress path was removed in v1.4.)
+That transcribed text (or those scene cuts) is a timing scaffold, not a
+subtitle product. It just shows you where each line lands so you know
+where to put your own caption. Local whisper accuracy is enough for that
+job, since you're going to replace the words anyway; the timestamps are the
+part that matters. On the Convert tab, **Import from Transcribe** pulls the
+chunks straight into the cue list, no file in between: your script wherever
+you wrote one, the original transcribed line wherever you didn't, with a
+green badge confirming what got imported. From there it behaves exactly
+like an uploaded `.srt`, editable inline, previewable per cue, burned in on
+convert. After converting, you get the actual GIF file size, the
+per-platform autoplay verdicts, and a **Resolution** preset or **Auto-fit ≤
+warn** button that picks a width to keep longer clips under the size
+threshold.
+
+Setup is `scripts/setup-tools.sh --transcribe`. It builds whisper.cpp at a
+pinned commit and fetches the sherpa-onnx binary plus every model file with
+SHA-256 verification, about 200 MB once, and then it's offline for good.
+Model size defaults to `WHISPER_MODEL=base`; `small` and `medium` trade
+speed for accuracy. Nothing leaves your machine doing any of this: there's
+no network code anywhere in the transcribe path. (v1.1 through v1.3 used
+the AssemblyAI API. That entire egress path is gone as of v1.4.)
 
 ## Using it (Convert)
 
 1. Choose a video. Trim with the ⇤/⇥ buttons if you want a section.
-2. Choose a subtitle file. Cues appear in a list — edit text inline, untick
+2. Choose a subtitle file. Cues appear in a list: edit text inline, untick
    cues you don't want, click a timestamp to preview that moment.
-3. Pick style (classic/bar), position, font, size, outline.
-4. Pick width/fps/encoder, watch the size estimate and platform chips.
-5. Convert → progress bar → download. The result reports actual size against
-   the autoplay threshold and every platform's limit.
+3. Pick a style (classic or bar), position, font, size, outline.
+4. Pick width, fps, and encoder, and watch the size estimate and platform
+   chips update.
+5. Hit Convert. Progress bar, then download. The result reports actual size
+   against the autoplay threshold and every platform's limit.
 
 ## Debugging
 
-If anything goes wrong, hit **Export debug log** (bottom of the page). It
-downloads one text file combining the client-side event log (UI actions,
-JS errors, unhandled rejections) with the server's diagnostic ring buffer
-(request trace, encode/transcribe lifecycles with timings and tool-error
-excerpts, environment/versions header). Error banners point at it. The
-trace contains **no secrets by construction** — and since v1.4 there are
-no API keys anywhere in the product to leak in the first place.
+If something breaks, hit **Export debug log** at the bottom of the page. It
+bundles the client-side event log (UI actions, JS errors, unhandled
+rejections) with the server's diagnostic ring buffer (request trace, encode
+and transcribe lifecycles with timings, tool-error excerpts, an environment
+and versions header) into one text file. Error banners link straight to it.
+The trace has no secrets in it by construction, and since v1.4 there aren't
+any API keys left in the product to leak in the first place.
 
 ## Tests
 
@@ -138,10 +177,11 @@ go test ./...        # unit + integration (needs ./bin binaries; ~10 s)
 go test -short ./... # unit tests only
 ```
 
-The integration suite generates a deterministic test clip, runs both encoder
-paths twice and asserts byte-identical output, verifies caption-bar geometry
-with ffprobe, drives the full HTTP API exactly as the frontend does, and
-probes traversal/malformed-ID handling.
+The integration suite makes a deterministic test clip, runs both encoder
+paths twice and checks the output is byte-identical, verifies caption-bar
+geometry with ffprobe, drives the full HTTP API the same way the frontend
+does, and pokes at path traversal and malformed-ID handling to make sure
+nothing gives.
 
 ## Repository map
 
@@ -149,33 +189,38 @@ probes traversal/malformed-ID handling.
 |---|---|
 | `main.go` `server.go` `jobs.go` `pipeline.go` `estimate.go` | Go server (stdlib only) |
 | `subtitle/` | tolerant SRT/VTT parser + table tests |
-| `frontend/index.html` | the whole UI — single file, no build step, no JS deps |
-| `site/index.html` | the public marketing page — single file, self-contained, offline |
+| `frontend/index.html` | the whole UI, single file, no build step, no JS deps |
 | `scripts/` | pinned toolchain fetcher, font fetcher |
 | `docs/` | architecture, CVE audit, sourced domain briefing (platform limits, size-estimate constants) |
 | `testdata/` | sample subtitle file |
 
-## Security posture (summary — full audit in docs/CVE-AUDIT.md)
+## Security posture (short version; full audit in docs/CVE-AUDIT.md)
 
-- Loopback bind; permissive CORS is safe because there are no credentials and
-  no state a cross-origin page could abuse that isn't already local.
-- No shell anywhere: `exec` argv arrays; user filenames never touch paths;
-  jobs live in per-job `0700` temp dirs keyed by crypto-random IDs.
-- Filter graphs go through `-filter_complex_script` files — a 1000-cue
-  subtitle can't overflow a command line or inject filter syntax.
-- Upload caps, per-part caps, PNG magic-byte checks, ffprobe validation
-  before any decode.
+- Loopback bind. Permissive CORS is safe here because there are no
+  credentials and no local state a cross-origin page could abuse that it
+  doesn't already have access to.
+- No shell, anywhere: `exec` calls use argv arrays, user filenames never
+  touch a path directly, and jobs live in per-job `0700` temp dirs keyed by
+  crypto-random IDs.
+- Filter graphs go through `-filter_complex_script` files, so a 1000-cue
+  subtitle file can't overflow a command line or sneak filter syntax in
+  sideways.
+- Upload caps, per-part caps, PNG magic-byte checks, and ffprobe validation,
+  all before anything gets decoded.
+- Output GIFs are scrubbed of Comment Extension metadata after encoding
+  (gifski otherwise embeds a "gif.ski" tag with no way to disable it); GIF
+  has no EXIF-equivalent container to begin with.
 
 ## License
 
 MIT for this repository's code. FFmpeg static builds are GPLv3 (separate
-binaries, fetched by script, not linked). gifski is AGPL-3.0 (separate binary,
-invoked as a subprocess). whisper.cpp is MIT (built from pinned source);
-sherpa-onnx is Apache-2.0 (separate binary, subprocess); model files:
-pyannote-segmentation-3.0 is MIT, NeMo TitaNet-small is CC-BY-4.0 (both
-fetched with attribution recorded in `bin/TOOL-VERSIONS.txt`), whisper ggml
-models are MIT (OpenAI Whisper weights as converted by whisper.cpp). Anton &
-Oswald fonts are SIL OFL 1.1 (fetched with their license texts).
+binaries, fetched by script, not linked). gifski is AGPL-3.0 (separate
+binary, invoked as a subprocess). whisper.cpp is MIT (built from pinned
+source); sherpa-onnx is Apache-2.0 (separate binary, subprocess); model
+files: pyannote-segmentation-3.0 is MIT, NeMo TitaNet-small is CC-BY-4.0
+(both fetched with attribution recorded in `bin/TOOL-VERSIONS.txt`), whisper
+ggml models are MIT (OpenAI Whisper weights as converted by whisper.cpp).
+Anton & Oswald fonts are SIL OFL 1.1 (fetched with their license texts).
 
 [gifski]: https://gif.ski/
 [whisper.cpp]: https://github.com/ggml-org/whisper.cpp
