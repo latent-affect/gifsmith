@@ -29,12 +29,12 @@ jobs:
 
       - name: Analyze
         id: warden-analyze
-        uses: getsentry/warden@v0
+        uses: getsentry/warden@2d0af8c4749bb4f2e73a94bbe2e335552fd9ffb8 # v0.46.1 -- pinned by commit, not the mutable v0 tag: this action receives WARDEN_* secrets (adversarial-code-review finding, 2026-08-16). v0 moves forward on every warden release (confirmed: its own tag message reads "Update v0 to v0.46.1"), so an unpinned @v0 would silently start running whatever getsentry/warden pushes next, with full secrets and a contents/PR-write token, on every ordinary same-repo PR. Bump deliberately -- re-resolve via `gh api repos/getsentry/warden/git/refs/tags/v0`, dereference the tag object, update both lines.
         with:
           mode: analyze
 
       - name: Report
-        uses: getsentry/warden@v0
+        uses: getsentry/warden@2d0af8c4749bb4f2e73a94bbe2e335552fd9ffb8 # v0.46.1 -- pinned by commit, not the mutable v0 tag: this action receives WARDEN_* secrets (adversarial-code-review finding, 2026-08-16). v0 moves forward on every warden release (confirmed: its own tag message reads "Update v0 to v0.46.1"), so an unpinned @v0 would silently start running whatever getsentry/warden pushes next, with full secrets and a contents/PR-write token, on every ordinary same-repo PR. Bump deliberately -- re-resolve via `gh api repos/getsentry/warden/git/refs/tags/v0`, dereference the tag object, update both lines.
         with:
           mode: report
           findings-file: ${{ steps.warden-analyze.outputs.findings-file }}

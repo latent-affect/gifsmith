@@ -18,20 +18,25 @@ together.
 
 ## Features
 
-- **Every caption comes from the video itself — that's the whole point.**
-  There's no "upload a subtitle file" path. GIFsmith won't take someone
-  else's timing on faith, because there's no way to guarantee an arbitrary
-  `.srt` actually matches the cuts in *this* encode of *this* clip, and a
-  caption that drifts from what's on screen is exactly the kind of
-  confident-looking-but-wrong output this tool exists to not produce. The
-  Transcribe tab runs [whisper.cpp] for local speech-to-text with word
-  timestamps and [sherpa-onnx] for local who-spoke-when diarization, both
-  pinned binaries — your audio never leaves your machine, no API, no
-  account, no key. If a clip has no audio track at all, there's nothing for
-  whisper to transcribe, so GIFsmith falls back to FFmpeg's own scene-cut
-  detection and hands you a blank row at every camera cut instead of a dead
-  end — still derived from the actual footage, never a file you'd have to
-  trust. `scripts/setup-tools.sh --transcribe` fetches the binaries and
+- **Cue timing comes from the video itself, not an uploaded file.** There's
+  no "upload a subtitle file" path in the UI. An arbitrary `.srt` has no way
+  to guarantee it actually matches the cuts in *this* encode of *this*
+  clip, and captions that drift from what's on screen are exactly the kind
+  of confident-looking-but-wrong output this tool exists to not produce —
+  so the shipped app never gives you a way to write a caption against
+  anything but timing it just derived from the loaded clip. (This is a
+  property of the UI, not a server-side lock: `POST /api/jobs` itself takes
+  whatever cue timing and images it's handed, same as it always has, and
+  cue text has always been yours to edit freely once a cue exists — the
+  guarantee is that the *shipped* path to get a cue never runs through
+  someone else's file.) The Transcribe tab runs [whisper.cpp] for local
+  speech-to-text with word timestamps and [sherpa-onnx] for local
+  who-spoke-when diarization, both pinned binaries — your audio never
+  leaves your machine, no API, no account, no key. If a clip has no audio
+  track at all, there's nothing for whisper to transcribe, so GIFsmith
+  falls back to FFmpeg's own scene-cut detection and hands you a blank row
+  at every camera cut instead of a dead end — still derived from the actual
+  footage, never a file you'd have to trust. `scripts/setup-tools.sh --transcribe` fetches the binaries and
   diarization models once, with hard SHA-256 pins (the whisper model is
   checked against upstream's published hash, and you can pin your own via
   `WHISPER_MODEL_SHA256`). After that, it's offline for good.
