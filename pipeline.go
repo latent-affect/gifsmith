@@ -21,6 +21,7 @@ package main
 //   - Numeric settings are clamped server-side regardless of client checks.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -533,33 +534,116 @@ func Run(ctx context.Context, t *Tools, dir string, spec *JobSpec, probes []*Pro
 		return fmt.Errorf("unknown encoder %q", spec.Encoder)
 	}
 
-	scrubOutputMetadata(outPath)
+	// Fail-closed metadata scrub (2026-08-16 redesign; see
+	// docs/domain/fail-closed-privacy-design.md and gifmeta.go's own
+	// header). The old version was fail-open: a strip error logged to the
+	// debug ring buffer and the job still reported success, shipping a
+	// file with its "gif.ski" fingerprint intact and no visible warning --
+	// exactly the "only find out by looking for it" gap the project's own
+	// "nothing traces back to how this was made" claim can't tolerate.
+	return scrubOutputMetadataFailClosed(outPath)
+}
+
+// scrubOutputMetadataFailClosed retries scrubOutputMetadata (transient I/O
+// only -- never the encode above) a bounded number of times, and on total
+// failure actively removes outPath before returning an error. Extracted
+// from Run so it's independently unit-testable without a real video
+// encode: scrubOutputMetadata's read/parse/write/verify path doesn't care
+// whether outPath came from gifski or a hand-built fixture.
+//
+// JobManager.run (jobs.go) already gates ResultPath on JobState==JobDone,
+// so a returned error here already makes the file unreachable via the
+// API; removing outPath is defense-in-depth on top of that state gate,
+// not a substitute for it.
+func scrubOutputMetadataFailClosed(outPath string) error {
+	const maxAttempts = 3
+	var scrubErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		scrubErr = scrubOutputMetadata(outPath)
+		if scrubErr == nil {
+			return nil
+		}
+		Debug.Add("pipeline", "metadata scrub attempt %d/%d failed for %s: %v",
+			attempt, maxAttempts, outPath, scrubErr)
+	}
+	_ = os.Remove(outPath) // best-effort; the error return below is what actually fails the job
+	return fmt.Errorf("metadata scrub could not be verified after %d attempts, refusing to publish: %w",
+		maxAttempts, scrubErr)
+}
+
+// scrubOutputMetadata replaces outPath with a verified-clean copy, or
+// leaves outPath untouched and returns an error. It never mutates outPath
+// in place: the scrubbed result is written to a sibling temp file in the
+// same directory, independently re-verified FROM DISK, and only then
+// os.Rename'd over outPath -- POSIX-atomic on a same-directory rename, so
+// nothing can ever observe a partially-written or partially-scrubbed
+// outPath. On any error outPath is left exactly as the encoder produced
+// it (fingerprint intact); the caller (Run, above) is responsible for
+// treating that as fatal, not for silently accepting the unscrubbed file.
+func scrubOutputMetadata(outPath string) error {
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", outPath, err)
+	}
+	cleaned, _, err := stripGIFComments(data)
+	if err != nil {
+		return fmt.Errorf("parsing %s: %w", outPath, err)
+	}
+
+	tmpPath := outPath + ".scrubbing"
+	if err := os.WriteFile(tmpPath, cleaned, 0o600); err != nil {
+		return fmt.Errorf("writing scrubbed temp file: %w", err)
+	}
+	defer os.Remove(tmpPath) // no-op once renamed away; cleans up on any early return
+
+	if err := verifyScrubbedClean(tmpPath); err != nil {
+		return fmt.Errorf("verifying scrubbed temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, outPath); err != nil {
+		return fmt.Errorf("publishing scrubbed file: %w", err)
+	}
 	return nil
 }
 
-// scrubOutputMetadata strips GIF Comment Extension blocks (gifski's
-// hardcoded "gif.ski" tag; defense-in-depth against any future FFmpeg
-// default) from the finished file. This is metadata hygiene, not part of
-// the encode contract: a strip failure is logged and the file is left as
-// the encoder produced it rather than failing a conversion that otherwise
-// succeeded.
-func scrubOutputMetadata(outPath string) {
-	data, err := os.ReadFile(outPath)
+// verifyScrubbedClean independently re-checks a scrubbed GIF from disk
+// before it's allowed to become the published output -- deliberately not
+// trusting stripGIFComments's own return values on the in-memory buffer it
+// just produced. A bug in the stripper's own logic wouldn't necessarily
+// catch itself, and a partial/interrupted write can leave bytes on disk
+// that don't match what was in memory; re-reading the actual file closes
+// both gaps at once.
+//
+// Two independent layers, not one -- a single re-parse risks the SAME
+// class of bug reproducing itself on a second run of the same algorithm:
+//
+//  1. Idempotent re-parse: stripGIFComments again, on bytes freshly read
+//     from disk. changed==false confirms both that the write persisted
+//     correctly and that a fresh structural parse finds no remaining
+//     Comment Extension block.
+//  2. A genuinely different, dumber check: a literal search for the known
+//     fingerprint bytes "gif.ski". Deliberately NOT a raw scan for the
+//     0x21 0xFE Comment Extension introducer on its own -- gifmeta.go's
+//     own header comment records that exact 2-byte sequence recurring 4-5
+//     times per file BY CHANCE inside LZW-compressed pixel data, so a
+//     blind scan for it would false-positive on genuinely clean files.
+//     "gif.ski" is a specific 7-byte ASCII string; the odds of it
+//     appearing by accident in compressed binary data are negligible, so
+//     this half can stay genuinely dumb (no GIF-structure parsing at all)
+//     without false-triggering the way the shorter marker would.
+func verifyScrubbedClean(path string) error {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		Debug.Add("pipeline", "metadata scrub: reading %s: %v", outPath, err)
-		return
+		return fmt.Errorf("reading for verification: %w", err)
 	}
-	cleaned, changed, err := stripGIFComments(data)
-	if err != nil {
-		Debug.Add("pipeline", "metadata scrub: %s: %v (left as-is)", outPath, err)
-		return
+	if _, changed, err := stripGIFComments(data); err != nil {
+		return fmt.Errorf("re-parse error: %w", err)
+	} else if changed {
+		return fmt.Errorf("re-parse still found a Comment Extension block after scrub")
 	}
-	if !changed {
-		return
+	if bytes.Contains(data, []byte("gif.ski")) {
+		return fmt.Errorf("known fingerprint bytes still present after scrub")
 	}
-	if err := os.WriteFile(outPath, cleaned, 0o600); err != nil {
-		Debug.Add("pipeline", "metadata scrub: writing %s: %v", outPath, err)
-	}
+	return nil
 }
 
 // runGifskiPath pipes Y4M from ffmpeg into gifski.
