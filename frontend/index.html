@@ -276,7 +276,7 @@
         </select>
       </div>
 
-      <div id="estimate">Estimated size: <b id="estMB">—</b> <span class="small">(rough heuristic — GIF size is very content-dependent)</span></div>
+      <div id="estimate">Estimated size: <b id="estMB">—</b> <span class="small">(rough heuristic — high-motion or busy footage can run well over this; the actual size after Convert is what to trust for a hard platform limit)</span></div>
       <div class="banner" id="sizeBanner"></div>
       <div id="platforms"></div>
 
@@ -954,17 +954,66 @@ function fmtT(s) {
 }
 
 /* ---------- estimate & platform chips ---------- */
+// Quality->multiplier curve for the gifski path, anchored at quality=90
+// (this app's own default) = 1.0. Measured empirically (2026-08-16) by
+// running the REAL bin/gifski across quality 10/50/90/100 on two content
+// samples chosen for opposite compressibility (a moving color-bar pattern
+// and a mandelbrot fractal): real output size scaled by close to the SAME
+// ratio at each quality point on both samples (0.24x / 0.41x / 1.0x /
+// 1.29x) even though the samples' absolute sizes differed by up to 9x --
+// so quality's effect is treated as roughly content-independent even
+// though the base size obviously isn't (that residual is what the
+// "content-dependent" disclaimer below still covers). Piecewise-linear
+// between the measured points; not a claim of precision beyond what two
+// content samples support -- a real regression here was that this curve
+// used to not exist at ALL: quality had ZERO effect on the estimate
+// despite gifski's own --quality flag changing real output size by up to
+// 5.4x across its range (792KB at quality=10 vs 4.3MB at quality=100 on
+// the fractal sample). Reported 2026-08-16.
+function qualityMultiplier(q) {
+  const points = [[1, 0.20], [10, 0.24], [50, 0.41], [90, 1.0], [100, 1.29]];
+  for (let i = 1; i < points.length; i++) {
+    const [qa, ma] = points[i - 1], [qb, mb] = points[i];
+    if (q <= qb) return ma + (mb - ma) * (q - qa) / (qb - qa);
+  }
+  return points[points.length - 1][1];
+}
+// Single source of truth for the bytes-per-pixel-frame constant, so the
+// estimate shown in the Output panel and the Auto-fit width solver below
+// can never independently drift the way they did before this function
+// existed: autoFit had its OWN inline copy of this same formula, using the
+// stale pre-recalibration constants, so it was solving a candidate width
+// against one set of assumptions and then validating that width against a
+// DIFFERENT (correct) set from estimateBytes() -- self-defeating in a way
+// that would have gotten worse, not better, from fixing estimateBytes()
+// alone. Found during the 2026-08-16 estimator review, same session as the
+// recalibration itself -- exactly the kind of duplicate-logic bug that
+// tends to surface right after a fix to one of the two copies.
+function currentBpp() {
+  const enc = $("encoder").value, dith = $("dither").value;
+  if (enc === "gifski") {
+    const q = Math.min(100, Math.max(1, parseInt($("quality").value, 10) || 90));
+    return 0.30 * qualityMultiplier(q);
+  }
+  // Recalibrated 2026-08-16 against real bin/ffmpeg palettegen/paletteuse
+  // output (previously 0.18/0.22/0.26/0.26 -- roughly HALF the measured
+  // size on complex content: real sierra2_4a ran 0.49 bytes/px-frame on a
+  // fractal sample vs the old 0.26 constant). floyd_steinberg used to
+  // share bayer's bucket via the same "not none, not bayer" fallthrough
+  // that also caught it; split out now that it measured distinctly.
+  // Deliberately erring toward NOT underestimating: this number exists to
+  // tell someone whether a GIF will clear a platform's upload limit, and
+  // the wrong-direction error there is the one that actually costs them
+  // (a rejected upload), not the safe direction (a pleasant surprise).
+  const ditherBpp = { none: 0.28, bayer: 0.32, floyd_steinberg: 0.35, sierra2_4a: 0.38 };
+  return ditherBpp[dith] ?? 0.32;
+}
 function estimateBytes() {
   if (!clips.length) return 0;
   const { W, canvasH } = outGeometry();
   const fps = clampFps();
   const dur = totalDur(); // assembled multi-clip timeline
-  const enc = $("encoder").value, dith = $("dither").value;
-  let bpp = 0.26;
-  if (enc === "gifski") bpp = 0.30;
-  else if (dith === "none") bpp = 0.18;
-  else if (dith === "bayer") bpp = 0.22;
-  return W * canvasH * fps * dur * bpp;
+  return W * canvasH * fps * dur * currentBpp();
 }
 function clampFps() { let f = parseFloat($("fps").value) || 15; return Math.min(50, Math.max(1, f)); }
 // warnMB: null/undefined config → default; explicit 0 (server -warn-mb 0)
@@ -1268,11 +1317,7 @@ $("autoFit").addEventListener("click", () => {
   if (!clips.length) return;
   const limitMB = warnMB() > 0 ? warnMB() : 30.2;
   const fps = clampFps(), dur = totalDur();
-  const enc = $("encoder").value, dith = $("dither").value;
-  let bpp = 0.26;
-  if (enc === "gifski") bpp = 0.30;
-  else if (dith === "none") bpp = 0.18;
-  else if (dith === "bayer") bpp = 0.22;
+  const bpp = currentBpp();
   // estimate = W * H * fps * dur * bpp with H ≈ r·W (r from current canvas).
   const g = outGeometry();
   const r = g.canvasH / g.W;
