@@ -134,17 +134,32 @@ func defaultJobsDir() string {
 // transcription toolchain (whisper-cli + sherpa-onnx diarization + model
 // files under dir/models) is optional as a set — if any piece is missing
 // the Transcribe tab is disabled and everything else still works.
-func findTools(dir, whisperModel string) (*Tools, error) {
-	find := func(name string) string {
-		p := filepath.Join(dir, name)
+// findBinary resolves name to a full path: first dir/name, then dir/name.exe,
+// then $PATH. The dir/name.exe check runs unconditionally, not gated on
+// runtime.GOOS -- on Unix it's just a harmless stat-miss, and it means this
+// logic is exercised -- and testable -- on every platform rather than only
+// proven correct by actually running it on Windows, which nothing in this
+// project's CI does. Bug fixed here (2026-08-17): the README's own Windows
+// instructions ("drop ffmpeg.exe, ffprobe.exe, gifski.exe into bin\") never
+// worked -- this used to only check the bare name, so a project-local bin\
+// with the exact files the README tells you to put there was invisible to
+// the app, silently falling through to the $PATH-only LookPath below (which
+// resolves .exe correctly, but never sees bin\ at all).
+func findBinary(dir, name string) string {
+	for _, n := range []string{name, name + ".exe"} {
+		p := filepath.Join(dir, n)
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
 			return p
 		}
-		if p, err := exec.LookPath(name); err == nil {
-			return p
-		}
-		return ""
 	}
+	if p, err := exec.LookPath(name); err == nil {
+		return p
+	}
+	return ""
+}
+
+func findTools(dir, whisperModel string) (*Tools, error) {
+	find := func(name string) string { return findBinary(dir, name) }
 	fileIf := func(p string) string {
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
 			return p
