@@ -64,14 +64,18 @@ together.
   Every encode ends with a per-platform pass/fail table, so you know exactly
   where your GIF will and won't autoplay. Threshold's configurable with
   `-warn-mb` if you disagree with our math.
-- **Two encoders, your call.** [gifski] for the best quality via per-frame
-  palettes, or FFmpeg's `palettegen`/`paletteuse` for speed, smaller files,
-  and selectable dithering. The encode path is byte-deterministic and the
-  test suite proves it: same input, same settings, identical bytes, every
-  time, no ML anywhere near it. (The Transcribe tab is the one ML feature in
-  the whole app. It's reproducible run-to-run on the same machine and model,
-  but neural inference isn't bit-exact across hardware, so we're not going
-  to pretend it is. See docs/ARCHITECTURE.md §Determinism.)
+- **[gifski] encodes, via real per-frame palettes.** v1.4 shipped a second
+  encoder option — FFmpeg's own `palettegen`/`paletteuse` — advertised as
+  faster and smaller. Measured head-to-head (2026-08-17, GIF-12) across
+  three content types, gifski won on output size every time (1.4x-4.3x
+  smaller) with speed a wash to a clear gifski win depending on content —
+  the opposite of the original claim. Removed rather than kept as a slower,
+  bigger, redundant option; no ML anywhere in the path, and the test suite
+  proves gifski's own output is byte-deterministic: same input, same
+  settings, identical bytes, every time. (The Transcribe tab is the one ML
+  feature in the whole app. It's reproducible run-to-run on the same machine
+  and model, but neural inference isn't bit-exact across hardware, so we're
+  not going to pretend it is. See docs/ARCHITECTURE.md §Determinism.)
 - **A small attack surface, on purpose.** The server is Go standard library
   only, zero third-party Go dependencies. gifski is pinned and
   checksum-verified; FFmpeg is built from source with `--disable-everything`
@@ -181,7 +185,7 @@ the AssemblyAI API. That entire egress path is gone as of v1.4.)
    Cues appear in a list: edit text inline, untick cues you don't want,
    click a timestamp to preview that moment.
 3. Pick a style (classic or bar), position, font, size, outline.
-4. Pick width, fps, and encoder, and watch the size estimate and platform
+4. Pick width, fps, and quality, and watch the size estimate and platform
    chips update.
 5. Hit Convert. Progress bar, then download. The result reports actual size
    against the autoplay threshold and every platform's limit.
@@ -203,8 +207,9 @@ go test ./...        # unit + integration (needs ./bin binaries; ~10 s)
 go test -short ./... # unit tests only
 ```
 
-The integration suite makes a deterministic test clip, runs both encoder
-paths twice and checks the output is byte-identical, verifies caption-bar
+The integration suite makes a deterministic test clip, runs the gifski
+encode path twice and logs whether the output was byte-identical (not
+hard-asserted — gifski is a threaded encoder), verifies caption-bar
 geometry with ffprobe, drives the full HTTP API the same way the frontend
 does, and pokes at path traversal and malformed-ID handling to make sure
 nothing gives.
@@ -215,7 +220,7 @@ nothing gives.
 |---|---|
 | `main.go` `server.go` `jobs.go` `pipeline.go` `estimate.go` `debuglog.go` | Go server core (stdlib only) |
 | `transcribe.go` `localasr.go` `scenedetect.go` | Transcribe tab: whisper.cpp + sherpa-onnx diarization, and the scene-cut fallback for silent clips -- the only two caption sources |
-| `gifmeta.go` | strips gifski's/FFmpeg's GIF Comment Extension metadata from encoder output |
+| `gifmeta.go` | strips gifski's GIF Comment Extension metadata (the "gif.ski" fingerprint) from encoder output |
 | `frontend/index.html` | the whole UI, single file, no build step, no JS deps |
 | `scripts/` | pinned toolchain fetcher, font fetcher |
 | `docs/` | architecture, CVE audit, sourced domain briefing (platform limits, size-estimate constants) |

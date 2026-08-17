@@ -38,18 +38,36 @@ const DefaultWarnMB = 30.2
 // content-dependent, so this is an order-of-magnitude heuristic, clearly
 // labeled as such in the UI. Basis: ~0.5 MB/s at 480×270 @15fps observed in
 // practitioner benchmarks (docs/domain-briefing.md §3) ⇒ ≈0.26 bytes per
-// pixel per frame; error-diffusion dither and high quality raise it.
-func EstimateBytes(width, height int, fps, seconds float64, encoder, dither string) int64 {
-	bpp := 0.26
-	switch {
-	case encoder == "gifski":
-		bpp = 0.30 // per-frame palettes keep more detail ⇒ slightly larger
-	case dither == "none":
-		bpp = 0.18
-	case dither == "bayer":
-		bpp = 0.22
-	}
+// pixel per frame at gifski's default quality (90); this is the ONLY
+// encoder path since 2026-08-17 (GIF-12 removed the ffmpeg palettegen/
+// paletteuse alternative). qualityMultiplier mirrors the frontend's own
+// curve (frontend/index.html, currentBpp/qualityMultiplier) — kept as two
+// independent implementations of the SAME calibration data rather than one
+// shared source, because this Go copy and the JS copy have no natural
+// shared module; if the curve is ever recalibrated, both need updating
+// together (see frontend/index.html's comment for the measurement this
+// curve is based on).
+func EstimateBytes(width, height int, fps, seconds float64, quality int) int64 {
+	bpp := 0.30 * qualityMultiplier(quality)
 	frames := fps * seconds
 	px := float64(width * height)
 	return int64(px * frames * bpp)
+}
+
+func qualityMultiplier(q int) float64 {
+	if q < 1 {
+		q = 1
+	} else if q > 100 {
+		q = 100
+	}
+	points := [][2]float64{{1, 0.20}, {10, 0.24}, {50, 0.41}, {90, 1.0}, {100, 1.29}}
+	qf := float64(q)
+	for i := 1; i < len(points); i++ {
+		qa, ma := points[i-1][0], points[i-1][1]
+		qb, mb := points[i][0], points[i][1]
+		if qf <= qb {
+			return ma + (mb-ma)*(qf-qa)/(qb-qa)
+		}
+	}
+	return points[len(points)-1][1]
 }

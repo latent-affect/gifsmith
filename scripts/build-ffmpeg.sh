@@ -109,7 +109,9 @@ cd "$SRCDIR/ffmpeg-$FF_VERSION"
 # Derived from the actual invocations in pipeline.go and transcribe.go:
 #   decode user video -> fps -> scale(lanczos) -> [pad+]setsar -> [concat if
 #   multi-clip] -> [pad for bar style] -> overlay(PNG cues) -> format ->
-#   {gif | palettegen/paletteuse | yuv4mpegpipe -> gifski}
+#   yuv4mpegpipe -> gifski
+#   (the ffmpeg-native palettegen/paletteuse encode path this comment used
+#   to also describe was removed 2026-08-17, GIF-12 -- gifski alone now)
 #   thumbnails: -> mjpeg
 #   transcribe: -vn -ac 1 -ar 16000 -> audio file
 #
@@ -209,14 +211,12 @@ say "Configuring (deny-by-default)…"
   --enable-parser=png \
   --enable-parser=aac \
   --enable-parser=flac \
-  --enable-encoder=gif \
   --enable-encoder=mjpeg \
   --enable-encoder=png \
   --enable-encoder=rawvideo \
   --enable-encoder=flac \
   --enable-encoder=pcm_s16le \
   --enable-encoder=wrapped_avframe \
-  --enable-muxer=gif \
   --enable-muxer=image2 \
   --enable-muxer=yuv4mpegpipe \
   --enable-muxer=rawvideo \
@@ -236,8 +236,6 @@ say "Configuring (deny-by-default)…"
   --enable-filter=concat \
   --enable-filter=scdet \
   --enable-filter=metadata \
-  --enable-filter=palettegen \
-  --enable-filter=paletteuse \
   --enable-filter=crop \
   --enable-filter=trim \
   --enable-filter=setpts \
@@ -350,13 +348,6 @@ check "cue PNG decode + overlay + scale + fps + pad (the caption path)" \
         -filter_complex "[0:v]fps=10,scale=320:-2:flags=lanczos,pad=iw:ih+40:0:40,format=rgba[base];[base][1:v]overlay=0:0:enable='gte(t,0)*lt(t,1)',format=yuv420p[out]" \
         -map "[out]" -c:v rawvideo -f nut "$T/composited.nut"
 
-check "GIF encode via palettegen/paletteuse (two-pass path)" \
-  bash -c "'$FF' -y -i '$T/src.nut' -vf 'fps=10,scale=160:-2:flags=lanczos,palettegen' '$T/pal.png' && \
-           '$FF' -y -i '$T/src.nut' -i '$T/pal.png' -lavfi 'fps=10,scale=160:-2:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer' '$T/out.gif'"
-
-check "GIF encode direct" \
-  "$FF" -y -i "$T/src.nut" -vf "fps=10,scale=160:-2" -f gif "$T/direct.gif"
-
 check "Y4M pipe output (the gifski path)" \
   bash -c "'$FF' -y -i '$T/src.nut' -vf 'fps=10,scale=160:-2,format=yuv420p' -f yuv4mpegpipe - > '$T/pipe.y4m'"
 
@@ -391,6 +382,15 @@ absent() { # description, grep-pattern, list-command...
 absent "magicyuv decoder (CVE-2026-8461 / PixelSmash)" '(^| )magicyuv' "$FF" -hide_banner -decoders
 absent "network protocols (http/https/rtmp/hls)"       '(^| )(http|rtmp|rtsp)' "$FF" -hide_banner -protocols
 absent "libass / subtitle burn-in filters"             '(^| )(ass|subtitles|drawtext)' "$FF" -hide_banner -filters
+# gif encoder/muxer and palettegen/paletteuse: GIFsmith's own ffmpeg-based
+# GIF-encoder path was removed 2026-08-17 (GIF-12) in favor of gifski alone
+# (measured smaller output, comparable-or-better speed, in every content
+# sample tested). decoder=gif/demuxer=gif stay enabled -- unrelated
+# read-only capability the Go test suite's gifDuration() helper still uses
+# to probe gifski's own output -- but ffmpeg WRITING a gif is now exactly as
+# dead as decoding MagicYUV, so it's checked absent the same way.
+absent "gif encoder"          '(^| )gif( |$)' "$FF" -hide_banner -encoders
+absent "palettegen/paletteuse filters" '(^| )palette(gen|use)' "$FF" -hide_banner -filters
 
 [ "$FAILED" = 0 ] || die "self-test failed — add the missing --enable- flags and re-run. Do NOT ship this build."
 

@@ -22,14 +22,13 @@
 │                   → job queue (1 encode at a time)             │
 │                                                                │
 │  pipeline:  ffmpeg -ss/-to -i video -i cue_*.png               │
-│             -filter_complex_script:                            │
+│             -/filter_complex <script>:                         │
 │               [0:v] fps → scale (lanczos, no dither)           │
 │                     → pad (bar style) → format=rgba [base]     │
 │               [k:v] scale → overlay enable='between(t,S,E)'    │
 │               … chained per cue … → format=yuv420p [out]       │
 │                                                                │
-│   encoder=gifski : [out] → Y4M pipe → gifski → out.gif         │
-│   encoder=ffmpeg : pass1 palettegen → pass2 paletteuse(dither) │
+│   [out] → Y4M pipe → gifski → out.gif                          │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -80,13 +79,25 @@ Two different guarantees, stated separately on purpose (v1.4):
 
 **The encode path** (everything between "Convert" and the finished GIF):
 
-- No ML, no RNG, no time-dependent inputs anywhere in it.
-- FFmpeg path: `palettegen` (Heckbert median-cut) and every `paletteuse`
-  dither are deterministic algorithms; `sws_dither=none` keeps scaling exact.
-- gifski path: verified byte-identical across runs in the test suite.
-- The test suite SHA-256-compares two full pipeline runs for both encoders.
-- Caveat (documented, not hidden): determinism is guaranteed per
-  binary-version. A different FFmpeg/gifski build may produce different
+- No ML, no RNG anywhere in it. gifski (the only encoder as of 2026-08-17,
+  GIF-12) uses libimagequant's per-frame palette quantization — a classical
+  clustering algorithm, not ML, confirmed against its own docs.
+- Not unconditionally byte-deterministic, and this project doesn't claim it
+  is: gifski is a threaded encoder, and the test suite (TestPipelineGifskiEncoder,
+  TestPipelineMultiClipConcat) deliberately LOGS whether two runs matched
+  rather than hard-asserting it, on the documented chance that thread
+  scheduling affects output on some machine/input. Every run so far on this
+  project's own test fixtures has come back byte-identical, but "observed
+  deterministic here" and "guaranteed deterministic" are different claims,
+  and only the first one is made.
+  (v1.1-v1.4 also shipped an FFmpeg `palettegen`/`paletteuse` encoder path,
+  which WAS hard-asserted deterministic — Heckbert median-cut plus a
+  selectable, non-random dither. Removed 2026-08-17: real head-to-head
+  measurement showed gifski smaller in every content sample tested, and the
+  removed path's one edge — an ironclad determinism guarantee — wasn't
+  judged worth keeping a second, slower, bigger-output encoder path for.)
+- Caveat (documented, not hidden): whatever determinism does hold is
+  per-binary-version. A different gifski build may produce different
   (equally valid) bytes. `bin/TOOL-VERSIONS.txt` records what you ran.
 
 **The transcribe path** (whisper.cpp + sherpa-onnx — the one ML feature):
@@ -167,5 +178,7 @@ can reach the API), 300 thumbnails/job/clip, 2 concurrent thumbnail
 extractions, 20-minute-per-clip timeout (capped at 90 min/job).
 
 Settings JSON: `trimStart trimEnd width fps style barPx barPos barColor
-encoder quality dither maxColors cues[{start,end}]` — every field clamped or
-rejected server-side in `JobSpec.Validate` regardless of what the client sent.
+quality cues[{start,end}]` — every field clamped or rejected server-side in
+`JobSpec.Validate` regardless of what the client sent. (`encoder`, `dither`,
+`maxColors` were removed 2026-08-17 along with the ffmpeg encoder path —
+GIF-12.)

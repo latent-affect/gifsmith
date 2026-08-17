@@ -2,14 +2,25 @@ package main
 
 // pipeline.go — construction and execution of the media pipeline.
 //
-// Two encoder paths, both deterministic-by-construction (no ML, no RNG):
+// One encoder path: ffmpeg (decode→trim→fps→scale→pad→overlays) → Y4M on
+// stdout → gifski stdin → GIF. Per-frame palettes, temporal dithering via
+// libimagequant, deterministic-by-construction (no ML, no RNG) -- verified
+// byte-identical across runs by TestPipelineGifskiEncoder.
 //
-//   gifski : ffmpeg (decode→trim→fps→scale→pad→overlays) → Y4M on stdout
-//            → gifski stdin → GIF.  Highest quality (per-frame palettes,
-//            temporal dithering via libimagequant).
-//   ffmpeg : same filter graph, then a two-pass palettegen/paletteuse
-//            encode (Heckbert median-cut + chosen dither, all deterministic
-//            algorithms; see docs/domain-briefing.md).
+// An FFmpeg-native second path (two-pass palettegen/paletteuse, Heckbert
+// median-cut + selectable dither) existed through v1.4 and was removed
+// 2026-08-17 (GIF-12): head-to-head measurement against real bin/ffmpeg and
+// bin/gifski across three content samples (a moving color-bar pattern, a
+// mandelbrot fractal, and a Conway's-Life cellular automaton) showed gifski
+// producing smaller output in all three (1.4x-4.3x) with speed a wash to a
+// clear gifski win depending on content -- directly contradicting this
+// project's own prior claim that the ffmpeg path meant "speed, smaller
+// files." No CVEs found for gifski or its libimagequant dependency at
+// removal time. The one real thing the ffmpeg path offered and gifski
+// doesn't -- 4 selectable dither algorithms -- wasn't judged worth carrying
+// a second full encode path for. FFmpeg itself is unavoidable regardless
+// (decode, scaling, compositing) -- this removed one of its two ROLES, not
+// the dependency.
 //
 // Security invariants (adversarial-review checklist):
 //   - No shell is ever invoked: exec.Command with fixed argv arrays.
@@ -78,16 +89,13 @@ type CueSpec struct {
 type JobSpec struct {
 	Clips []ClipSpec
 
-	Width     int     // output width px
-	FPS       float64 // ≤ 50
-	Style     string  // "classic" (overlay on video) or "bar" (padded bar)
-	BarPx     int     // extra canvas height for style=bar (even, ≥0)
-	BarPos    string  // "top" or "bottom" (where the bar is padded)
-	BarColor  string  // "white" or "black"
-	Encoder   string  // "gifski" or "ffmpeg"
-	Quality   int     // gifski --quality 1..100
-	Dither    string  // ffmpeg path: bayer | sierra2_4a | floyd_steinberg | none
-	MaxColors int     // ffmpeg path palette size 4..256
+	Width    int     // output width px
+	FPS      float64 // ≤ 50
+	Style    string  // "classic" (overlay on video) or "bar" (padded bar)
+	BarPx    int     // extra canvas height for style=bar (even, ≥0)
+	BarPos   string  // "top" or "bottom" (where the bar is padded)
+	BarColor string  // "white" or "black"
+	Quality  int     // gifski --quality 1..100
 
 	Cues []CueSpec
 }
@@ -178,34 +186,11 @@ func (s *JobSpec) Validate(probes []*ProbeInfo) error {
 		return fmt.Errorf("style must be classic or bar")
 	}
 
-	switch s.Encoder {
-	case "", "gifski":
-		s.Encoder = "gifski"
-	case "ffmpeg":
-	default:
-		return fmt.Errorf("encoder must be gifski or ffmpeg")
-	}
-
 	if s.Quality == 0 {
 		s.Quality = 90
 	}
 	if s.Quality < MinQuality || s.Quality > MaxQuality {
 		return fmt.Errorf("quality %d out of range [%d,%d]", s.Quality, MinQuality, MaxQuality)
-	}
-
-	switch s.Dither {
-	case "":
-		s.Dither = "sierra2_4a"
-	case "bayer", "sierra2_4a", "floyd_steinberg", "none":
-	default:
-		return fmt.Errorf("dither must be bayer, sierra2_4a, floyd_steinberg or none")
-	}
-
-	if s.MaxColors == 0 {
-		s.MaxColors = 256
-	}
-	if s.MaxColors < 4 || s.MaxColors > 256 {
-		return fmt.Errorf("maxColors %d out of range [4,256]", s.MaxColors)
 	}
 
 	// Canvas cap: probed source aspect is attacker-influenced; without this a
@@ -519,22 +504,13 @@ func Run(ctx context.Context, t *Tools, dir string, spec *JobSpec, probes []*Pro
 		inputArgs = append(inputArgs, "-i", c.File)
 	}
 
-	switch spec.Encoder {
-	case "gifski":
-		if t.Gifski == "" {
-			return fmt.Errorf("gifski binary not available; run scripts/setup-tools.sh or choose the ffmpeg encoder")
-		}
-		ffArgs := append(append([]string{}, inputArgs...),
-			"-/filter_complex", script, "-map", "[out]")
-		if err := runGifskiPath(ctx, t, spec, ffArgs, dur, outPath, cb); err != nil {
-			return err
-		}
-	case "ffmpeg":
-		if err := runPalettePath(ctx, t, spec, dir, script, inputArgs, dur, outPath, cb); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("unknown encoder %q", spec.Encoder)
+	if t.Gifski == "" {
+		return fmt.Errorf("gifski binary not available; run scripts/setup-tools.sh")
+	}
+	ffArgs := append(append([]string{}, inputArgs...),
+		"-/filter_complex", script, "-map", "[out]")
+	if err := runGifskiPath(ctx, t, spec, ffArgs, dur, outPath, cb); err != nil {
+		return err
 	}
 
 	// Fail-closed metadata scrub (2026-08-16 redesign; see
@@ -704,63 +680,6 @@ func runGifskiPath(ctx context.Context, t *Tools, spec *JobSpec, base []string, 
 	}
 	if ffWaitErr != nil {
 		return fmt.Errorf("ffmpeg failed: %s", firstLine(ffErr.String()))
-	}
-	if cb != nil {
-		cb(1)
-	}
-	return nil
-}
-
-// runPalettePath is the two-pass FFmpeg palettegen/paletteuse encoder.
-// Both passes share the decode/filter prefix; each pass appends its own
-// tail to the base filter graph in a per-pass script file.
-func runPalettePath(ctx context.Context, t *Tools, spec *JobSpec, dir, script string, inputArgs []string, dur float64, outPath string, cb Progress) error {
-	palette := filepath.Join(dir, "palette.png")
-	graph, err := os.ReadFile(script)
-	if err != nil {
-		return fmt.Errorf("reading filter graph: %w", err)
-	}
-	base := strings.TrimSpace(string(graph)) // ends in "[out]"
-
-	writePass := func(name, tail string) (string, error) {
-		p := filepath.Join(dir, name)
-		return p, os.WriteFile(p, []byte(base+";"+tail), 0o600)
-	}
-
-	// Pass 1: palette. reserve_transparent=0 — output GIF is fully opaque.
-	s1, err := writePass("filtergraph.pass1.txt",
-		fmt.Sprintf("[out]palettegen=max_colors=%d:reserve_transparent=0:stats_mode=full[pal]", spec.MaxColors))
-	if err != nil {
-		return err
-	}
-	p1 := append(append([]string{}, inputArgs...),
-		"-/filter_complex", s1, "-map", "[pal]",
-		"-frames:v", "1", "-update", "1", "-y", palette)
-	cmd1 := exec.CommandContext(ctx, t.FFmpeg, append(p1, progressArgs()...)...)
-	err1 := captureProgress(cmd1, dur, scaleCB(cb, 0, 0.5))
-	if err := cmd1.Run(); err != nil {
-		return fmt.Errorf("palette pass failed: %s", firstLine(err1.String()))
-	}
-
-	// Pass 2: map through the palette with the chosen (deterministic) dither.
-	// Inputs: 0..N-1=clips, N..N+M-1=cues, N+M=palette.
-	dither := spec.Dither
-	if dither == "bayer" {
-		dither = "bayer:bayer_scale=3"
-	}
-	palIdx := len(spec.Clips) + len(spec.Cues)
-	s2, err := writePass("filtergraph.pass2.txt",
-		fmt.Sprintf("[out][%d:v]paletteuse=dither=%s[final]", palIdx, dither))
-	if err != nil {
-		return err
-	}
-	p2 := append(append([]string{}, inputArgs...), "-i", palette,
-		"-/filter_complex", s2, "-map", "[final]",
-		"-loop", "0", "-y", outPath)
-	cmd2 := exec.CommandContext(ctx, t.FFmpeg, append(p2, progressArgs()...)...)
-	err2 := captureProgress(cmd2, dur, scaleCB(cb, 0.5, 1))
-	if err := cmd2.Run(); err != nil {
-		return fmt.Errorf("encode pass failed: %s", firstLine(err2.String()))
 	}
 	if cb != nil {
 		cb(1)

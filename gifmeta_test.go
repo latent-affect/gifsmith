@@ -98,7 +98,7 @@ func TestStripGIFCommentsAgainstRealEncoderOutput(t *testing.T) {
 	}
 	dir := t.TempDir()
 	video := makeSampleVideo(t, tools, dir)
-	spec := baseSpec(video, nil, "gifski")
+	spec := baseSpec(video, nil)
 	out := dir + "/out.gif"
 	runOnce(t, tools, spec, video, out)
 

@@ -80,13 +80,12 @@ func sha(t *testing.T, p string) [32]byte {
 	return sha256.Sum256(b)
 }
 
-func baseSpec(video string, cues []CueSpec, encoder string) *JobSpec {
+func baseSpec(video string, cues []CueSpec) *JobSpec {
 	return &JobSpec{
 		Clips:   []ClipSpec{{Path: video, TrimStart: 0.5, TrimEnd: 3.5}},
 		Width:   240,
 		FPS:     10,
 		Style:   "classic",
-		Encoder: encoder,
 		Quality: 80,
 		Cues:    cues,
 	}
@@ -115,7 +114,7 @@ func runOnce(t *testing.T, tools *Tools, spec *JobSpec, video string, out string
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	if err := Run(ctx, tools, dir, &cp, probes, out, nil); err != nil {
-		t.Fatalf("run (%s): %v", spec.Encoder, err)
+		t.Fatalf("run: %v", err)
 	}
 	fi, err := os.Stat(out)
 	if err != nil || fi.Size() == 0 {
@@ -127,34 +126,6 @@ func runOnce(t *testing.T, tools *Tools, spec *JobSpec, video string, out string
 	f.Close()
 	if string(hdr) != "GIF89a" && string(hdr) != "GIF87a" {
 		t.Fatalf("output is not a GIF (header %q)", hdr)
-	}
-}
-
-func TestPipelineFFmpegEncoderDeterministic(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration")
-	}
-	tools := testTools(t)
-	dir := t.TempDir()
-	video := makeSampleVideo(t, tools, dir)
-	// Canvas geometry for 240px wide, 320x180 source: h = round(240*180/320)=135 → 134.
-	cue1 := makeCuePNG(t, dir, "c1.png", 240, 134, color.RGBA{255, 255, 255, 255})
-	cue2 := makeCuePNG(t, dir, "c2.png", 240, 134, color.RGBA{255, 255, 0, 255})
-	cues := []CueSpec{
-		{Start: 1.0, End: 2.0, File: cue1},
-		{Start: 2.0, End: 3.0, File: cue2},
-	}
-
-	d1, d2 := filepath.Join(dir, "a"), filepath.Join(dir, "b")
-	_ = os.MkdirAll(d1, 0o700)
-	_ = os.MkdirAll(d2, 0o700)
-	o1, o2 := filepath.Join(d1, "out.gif"), filepath.Join(d2, "out.gif")
-
-	spec := baseSpec(video, cues, "ffmpeg")
-	runOnce(t, tools, spec, video, o1)
-	runOnce(t, tools, spec, video, o2)
-	if sha(t, o1) != sha(t, o2) {
-		t.Errorf("ffmpeg palette path is NOT byte-deterministic across runs")
 	}
 }
 
@@ -176,14 +147,13 @@ func TestPipelineGifskiEncoder(t *testing.T) {
 	_ = os.MkdirAll(d2, 0o700)
 	o1, o2 := filepath.Join(d1, "out.gif"), filepath.Join(d2, "out.gif")
 
-	spec := baseSpec(video, cues, "gifski")
+	spec := baseSpec(video, cues)
 	runOnce(t, tools, spec, video, o1)
 	runOnce(t, tools, spec, video, o2)
 	if sha(t, o1) == sha(t, o2) {
 		t.Log("gifski output is byte-deterministic across runs on this machine")
 	} else {
-		t.Log("NOTE: gifski output differs between runs (threaded encode); " +
-			"use the ffmpeg encoder when byte-exact reproducibility matters")
+		t.Log("NOTE: gifski output differs between runs (threaded encode)")
 	}
 }
 
@@ -232,8 +202,7 @@ func TestPipelineMultiClipConcat(t *testing.T) {
 		Width:   240,
 		FPS:     10,
 		Style:   "classic",
-		Encoder: "ffmpeg",
-		Dither:  "bayer",
+		Quality: 90,
 		Cues:    []CueSpec{{Start: 1.5, End: 2.5, File: cue}}, // straddles the seam
 	}
 
@@ -244,9 +213,13 @@ func TestPipelineMultiClipConcat(t *testing.T) {
 	runOnce(t, tools, spec, v1, o1)
 	runOnce(t, tools, spec, v1, o2)
 
-	// Determinism holds across the concat path too.
+	// gifski's determinism isn't hard-asserted anywhere in this suite (see
+	// TestPipelineGifskiEncoder) -- it's a threaded encoder, so a log rather
+	// than a hard failure here matches that same caution across the concat
+	// path instead of introducing a flaky assertion this codebase otherwise
+	// deliberately avoids for gifski specifically.
 	if sha(t, o1) != sha(t, o2) {
-		t.Errorf("multi-clip ffmpeg path is NOT byte-deterministic across runs")
+		t.Log("NOTE: gifski output differs between runs on the multi-clip concat path (threaded encode)")
 	}
 
 	// Assembled duration = sum of trimmed windows (GIF frame timing is
@@ -288,7 +261,7 @@ func TestPipelineBarStyle(t *testing.T) {
 	video := makeSampleVideo(t, tools, dir)
 	// Bar canvas: vidH 134 + bar 40 = 174.
 	cue := makeCuePNG(t, dir, "c1.png", 240, 174, color.RGBA{0, 0, 0, 255})
-	spec := baseSpec(video, []CueSpec{{Start: 1.0, End: 2.0, File: cue}}, "ffmpeg")
+	spec := baseSpec(video, []CueSpec{{Start: 1.0, End: 2.0, File: cue}})
 	spec.Style = "bar"
 	spec.BarPx = 40
 	spec.BarPos = "top"
@@ -326,11 +299,6 @@ func TestValidateRejectsHostileSpecs(t *testing.T) {
 	s.Style = "banana"
 	if err := s.Validate(probes); err == nil {
 		t.Error("unknown style accepted")
-	}
-	s = base()
-	s.Encoder = "rm -rf"
-	if err := s.Validate(probes); err == nil {
-		t.Error("unknown encoder accepted")
 	}
 	s = base()
 	s.Clips[0].TrimStart = 8
@@ -497,7 +465,7 @@ func TestAPIEndToEnd(t *testing.T) {
 	jw := multipart.NewWriter(&jb)
 	settings := map[string]any{
 		"trimStart": 0.5, "trimEnd": 3.5, "width": 240, "fps": 10,
-		"style": "classic", "encoder": "ffmpeg", "dither": "bayer",
+		"style": "classic",
 		"cues": []map[string]float64{{"start": cueStart, "end": cueEnd}},
 	}
 	sj, _ := json.Marshal(settings)
@@ -616,7 +584,7 @@ func TestCuePNGDimensionCapRejected(t *testing.T) {
 	jw := multipart.NewWriter(&jb)
 	settings := map[string]any{
 		"trimStart": 0.0, "trimEnd": 1.0, "width": 240, "fps": 10,
-		"style": "classic", "encoder": "ffmpeg", "dither": "bayer",
+		"style": "classic",
 		"cues": []map[string]float64{{"start": 0, "end": 1}},
 	}
 	sj, _ := json.Marshal(settings)
@@ -640,12 +608,18 @@ func TestCuePNGDimensionCapRejected(t *testing.T) {
 }
 
 func TestEstimateBytesSanity(t *testing.T) {
-	// 480x270 @15fps for 5s ≈ 2.5 MB ballpark from practitioner figures.
-	got := EstimateBytes(480, 270, 15, 5, "ffmpeg", "sierra2_4a")
+	// 480x270 @15fps for 5s at quality=90 (default) ≈ 2.5 MB ballpark from
+	// practitioner figures.
+	got := EstimateBytes(480, 270, 15, 5, 90)
 	if got < 1<<20 || got > 8<<20 {
 		t.Errorf("estimate %d bytes outside plausible 1–8 MB band", got)
 	}
-	if EstimateBytes(480, 270, 15, 5, "ffmpeg", "none") >= got {
-		t.Errorf("dither=none should estimate smaller than error diffusion")
+	// Quality must be a REAL factor, not just accepted-and-ignored: this is
+	// a regression test for the exact bug found and fixed 2026-08-16/17 --
+	// the estimator used to compute bpp from encoder+dither only, so gifski's
+	// own --quality flag (which measurably swings real output size by 5.4x
+	// across its range) had zero effect on the shown number.
+	if lo, hi := EstimateBytes(480, 270, 15, 5, 10), EstimateBytes(480, 270, 15, 5, 100); lo >= got || got >= hi {
+		t.Errorf("estimate not monotonically increasing with quality: q10=%d q90=%d q100=%d", lo, got, hi)
 	}
 }

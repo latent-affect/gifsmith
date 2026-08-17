@@ -29,16 +29,28 @@ that you are about to rely on months later.
   transparent-unchanged-pixel runs. Size therefore grows ~linearly with
   duration; a GIF is routinely 5–10× the equivalent H.264 MP4.
 - **Size levers, in order of power:** resolution (quadratic) > duration ≈
-  fps (linear) > colors/dither (fractional, and error-diffusion dithering
-  *fights* LZW by injecting noise). Ballpark: ≈0.5 MB/s at 480 px/15 fps
-  (practitioner figures; content-dependent by several ×). The estimator in
-  `estimate.go` encodes exactly this heuristic and labels it a heuristic.
-  [cleverutils; svgator; gifski README]
-- **FFmpeg quality workflow:** default one-pass conversion uses a generic
+  fps (linear) > quality/colors (fractional but real -- measured 2026-08-17
+  as a 5.4x swing across gifski's own --quality 1..100 range on real
+  content, not merely "fractional" in practice) > dither choice (error-
+  diffusion *fights* LZW by injecting noise). Ballpark: ≈0.5 MB/s at 480 px/
+  15 fps at gifski's default quality=90 (practitioner figures;
+  content-dependent by several ×, confirmed by direct measurement across
+  three content samples spanning a 9x range at fixed settings). The
+  estimator in `estimate.go` encodes this heuristic PLUS a quality-scaling
+  curve (`qualityMultiplier`) calibrated against real gifski output --
+  quality used to be accepted and silently ignored by the estimator, fixed
+  2026-08-16/17. [cleverutils; svgator; gifski README]
+- **FFmpeg quality workflow (historical -- this project's own use of it was
+  removed 2026-08-17, GIF-12; kept here as general domain knowledge, not a
+  claim about this codebase):** default one-pass conversion uses a generic
   palette (banding); correct is two-pass `palettegen` → `paletteuse`
   (Heckbert median-cut, 1982). `stats_mode=full|diff|single` trades static
   vs moving fidelity. Dithers available (`bayer`, `sierra2_4a` default,
   `floyd_steinberg`, `none`, …) are all deterministic — none use randomness.
+  Real head-to-head measurement against gifski (three content samples) found
+  this path producing LARGER output than gifski every time (1.4x-4.3x), and
+  gifski faster in two of three -- contradicts the "speed, smaller files"
+  framing this project's own docs used to carry for it.
   [ubitux (filter author) blog 2015; vf_palettegen.c/vf_paletteuse.c]
 - **gifski:** libimagequant (pngquant) engine, per-frame palettes + temporal
   dithering; quality ceiling among GIF encoders; its own README warns GIF is

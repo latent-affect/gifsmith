@@ -33,7 +33,6 @@ type Job struct {
 	Progress float64  `json:"progress"` // 0..1
 	Error    string   `json:"error,omitempty"`
 	OutBytes int64    `json:"outBytes,omitempty"`
-	Encoder  string   `json:"encoder"`
 	Width    int      `json:"width"`
 	Height   int      `json:"height"`
 	FPS      float64  `json:"fps"`
@@ -52,7 +51,7 @@ func (j *Job) snapshot() Job {
 	defer j.mu.Unlock()
 	return Job{
 		ID: j.ID, State: j.State, Progress: j.Progress, Error: j.Error,
-		OutBytes: j.OutBytes, Encoder: j.Encoder, Width: j.Width,
+		OutBytes: j.OutBytes, Width: j.Width,
 		Height: j.Height, FPS: j.FPS, Duration: j.Duration, Created: j.Created,
 	}
 }
@@ -155,7 +154,6 @@ func (m *JobManager) Submit(id, dir string, spec *JobSpec, probes []*ProbeInfo) 
 	j := &Job{
 		ID:       id,
 		State:    JobQueued,
-		Encoder:  spec.Encoder,
 		Width:    spec.Width,
 		Height:   spec.OutHeight(probes[0]),
 		FPS:      spec.FPS,
@@ -194,8 +192,8 @@ func (m *JobManager) run(parent context.Context, j *Job, spec *JobSpec, probes [
 	j.mu.Lock()
 	j.State = JobEncoding
 	j.mu.Unlock()
-	Debug.Add("encode", "job %s start: %s %dx%d @%gfps %.1fs clips=%d style=%s cues=%d",
-		j.ID[:8], spec.Encoder, spec.Width, spec.OutHeight(probes[0]), spec.FPS,
+	Debug.Add("encode", "job %s start: %dx%d @%gfps %.1fs clips=%d style=%s cues=%d",
+		j.ID[:8], spec.Width, spec.OutHeight(probes[0]), spec.FPS,
 		spec.TotalDuration(), len(spec.Clips), spec.Style, len(spec.Cues))
 	started := time.Now()
 

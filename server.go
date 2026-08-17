@@ -426,17 +426,14 @@ type createJobRequest struct {
 		TrimStart float64 `json:"trimStart"`
 		TrimEnd   float64 `json:"trimEnd"`
 	} `json:"clips"`
-	Width     int     `json:"width"`
-	FPS       float64 `json:"fps"`
-	Style     string  `json:"style"`
-	BarPx     int     `json:"barPx"`
-	BarPos    string  `json:"barPos"`
-	BarColor  string  `json:"barColor"`
-	Encoder   string  `json:"encoder"`
-	Quality   int     `json:"quality"`
-	Dither    string  `json:"dither"`
-	MaxColors int     `json:"maxColors"`
-	Cues      []struct {
+	Width    int     `json:"width"`
+	FPS      float64 `json:"fps"`
+	Style    string  `json:"style"`
+	BarPx    int     `json:"barPx"`
+	BarPos   string  `json:"barPos"`
+	BarColor string  `json:"barColor"`
+	Quality  int     `json:"quality"`
+	Cues     []struct {
 		Start float64 `json:"start"`
 		End   float64 `json:"end"`
 	} `json:"cues"`
@@ -563,16 +560,13 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	spec := &JobSpec{
-		Width:     req.Width,
-		FPS:       req.FPS,
-		Style:     req.Style,
-		BarPx:     req.BarPx,
-		BarPos:    req.BarPos,
-		BarColor:  req.BarColor,
-		Encoder:   req.Encoder,
-		Quality:   req.Quality,
-		Dither:    req.Dither,
-		MaxColors: req.MaxColors,
+		Width:    req.Width,
+		FPS:      req.FPS,
+		Style:    req.Style,
+		BarPx:    req.BarPx,
+		BarPos:   req.BarPos,
+		BarColor: req.BarColor,
+		Quality:  req.Quality,
 	}
 	for i, p := range clipPaths {
 		cs := ClipSpec{Path: p}
@@ -614,7 +608,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		"id":    snap.ID,
 		"state": snap.State,
 		"estimateBytes": EstimateBytes(spec.Width, spec.OutHeight(probes[0]), spec.FPS,
-			spec.TotalDuration(), spec.Encoder, spec.Dither),
+			spec.TotalDuration(), spec.Quality),
 	})
 }
 
@@ -642,7 +636,7 @@ func (s *Server) handleJobStatus(w http.ResponseWriter, r *http.Request) {
 		"id": snap.ID, "state": snap.State, "progress": snap.Progress,
 		"error": snap.Error, "outBytes": snap.OutBytes,
 		"warnMB": s.warnMB, "width": snap.Width, "height": snap.Height,
-		"fps": snap.FPS, "duration": snap.Duration, "encoder": snap.Encoder,
+		"fps": snap.FPS, "duration": snap.Duration,
 	})
 }
 

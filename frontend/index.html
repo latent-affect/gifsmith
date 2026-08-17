@@ -260,25 +260,15 @@
       </div>
       <div class="row"><label>FPS</label><input type="number" id="fps" min="1" max="50" step="1" value="15">
         <span class="small">max 50 — browsers ignore faster GIFs</span></div>
-      <div class="row"><label>Encoder</label>
-        <select id="encoder">
-          <option value="gifski">gifski (best quality)</option>
-          <option value="ffmpeg">ffmpeg palette (fast, deterministic)</option>
-        </select>
-      </div>
-      <div class="row" id="qualityRow"><label>Quality</label><input type="range" id="quality" min="1" max="100" value="90"><span class="small" id="qualityLabel">90</span></div>
-      <div class="row" id="ditherRow" style="display:none"><label>Dither</label>
-        <select id="dither">
-          <option value="sierra2_4a">sierra2_4a (default)</option>
-          <option value="bayer">bayer (smaller file)</option>
-          <option value="floyd_steinberg">floyd–steinberg</option>
-          <option value="none">none (smallest)</option>
-        </select>
-      </div>
+      <div class="row"><label>Quality</label><input type="range" id="quality" min="1" max="100" value="90"><span class="small" id="qualityLabel">90</span></div>
 
       <div id="estimate">Estimated size: <b id="estMB">—</b> <span class="small">(rough heuristic — high-motion or busy footage can run well over this; the actual size after Convert is what to trust for a hard platform limit)</span></div>
       <div class="banner" id="sizeBanner"></div>
       <div id="platforms"></div>
+      <div class="banner err" id="gifskiMissingBanner" style="display:none">
+        gifski isn't installed — this is the only GIF encoder GIFsmith has. Run
+        <code>scripts/setup-tools.sh</code> to fetch it, then reload.
+      </div>
 
       <div class="row" style="margin-top:14px">
         <button id="convert" disabled>Convert to GIF</button>
@@ -399,11 +389,11 @@ async function ping() {
     if (lastPingOk !== true) { dbg("server connected: " + (CONFIG.ffmpeg || "?")); lastPingOk = true; }
     $("serverDot").classList.add("ok");
     $("serverDot").title = "connected — ffmpeg: " + CONFIG.ffmpeg + (CONFIG.gifskiPresent ? " · gifski: " + CONFIG.gifski : " · gifski missing");
-    if (!CONFIG.gifskiPresent) {
-      $("encoder").value = "ffmpeg";
-      $("encoder").querySelector('option[value="gifski"]').disabled = true;
-      syncEncoderRows();
-    }
+    // gifski is the only encoder GIFsmith has (the ffmpeg palettegen/
+    // paletteuse alternative was removed 2026-08-17, GIF-12) -- if it's not
+    // installed there is no fallback path left, unlike before this removal.
+    $("gifskiMissingBanner").style.display = CONFIG.gifskiPresent ? "none" : "";
+    updateConvertEnabled();
     renderPlatforms(null);
   } catch (e) {
     CONFIG = null;
@@ -989,24 +979,15 @@ function qualityMultiplier(q) {
 // alone. Found during the 2026-08-16 estimator review, same session as the
 // recalibration itself -- exactly the kind of duplicate-logic bug that
 // tends to surface right after a fix to one of the two copies.
+//
+// gifski is the only encoder as of 2026-08-17 (GIF-12 removed the ffmpeg
+// palettegen/paletteuse alternative -- head-to-head measurement showed
+// gifski smaller in every content sample tested, 1.4x-4.3x, with speed a
+// wash to a clear gifski win). This function used to branch on encoder and
+// carry a second, dither-keyed constant table for the removed path.
 function currentBpp() {
-  const enc = $("encoder").value, dith = $("dither").value;
-  if (enc === "gifski") {
-    const q = Math.min(100, Math.max(1, parseInt($("quality").value, 10) || 90));
-    return 0.30 * qualityMultiplier(q);
-  }
-  // Recalibrated 2026-08-16 against real bin/ffmpeg palettegen/paletteuse
-  // output (previously 0.18/0.22/0.26/0.26 -- roughly HALF the measured
-  // size on complex content: real sierra2_4a ran 0.49 bytes/px-frame on a
-  // fractal sample vs the old 0.26 constant). floyd_steinberg used to
-  // share bayer's bucket via the same "not none, not bayer" fallthrough
-  // that also caught it; split out now that it measured distinctly.
-  // Deliberately erring toward NOT underestimating: this number exists to
-  // tell someone whether a GIF will clear a platform's upload limit, and
-  // the wrong-direction error there is the one that actually costs them
-  // (a rejected upload), not the safe direction (a pleasant surprise).
-  const ditherBpp = { none: 0.28, bayer: 0.32, floyd_steinberg: 0.35, sierra2_4a: 0.38 };
-  return ditherBpp[dith] ?? 0.32;
+  const q = Math.min(100, Math.max(1, parseInt($("quality").value, 10) || 90));
+  return 0.30 * qualityMultiplier(q);
 }
 function estimateBytes() {
   if (!clips.length) return 0;
@@ -1054,26 +1035,19 @@ function renderPlatforms(bytes) {
 }
 // trimStart/trimEnd are NOT in this list: setTrim owns them (it must
 // write the active clip's model before the estimate reads totalDur()).
-["width","fps","encoder","dither","quality",
+["width","fps","quality",
  "style","fontSize","stroke","caps","font","position","barColor"]
   .forEach(id => { $(id).addEventListener("input", updateEstimate); $(id).addEventListener("change", updateEstimate); });
 
 /* ---------- style UI sync ---------- */
-function syncEncoderRows() {
-  const gif = $("encoder").value === "gifski";
-  $("qualityRow").style.display = gif ? "" : "none";
-  $("ditherRow").style.display = gif ? "none" : "";
-}
-$("encoder").addEventListener("change", () => { syncEncoderRows(); updateEstimate(); });
 $("style").addEventListener("change", () => { $("barColorRow").style.display = $("style").value === "bar" ? "" : "none"; });
 $("fontSize").addEventListener("input", () => $("fontSizeLabel").textContent = $("fontSize").value + "%");
 $("stroke").addEventListener("input", () => $("strokeLabel").textContent = $("stroke").value + "%");
 $("quality").addEventListener("input", () => $("qualityLabel").textContent = $("quality").value);
-syncEncoderRows();
 
 /* ---------- conversion ---------- */
 function updateConvertEnabled() {
-  $("convert").disabled = !(clips.length && CONFIG);
+  $("convert").disabled = !(clips.length && CONFIG && CONFIG.gifskiPresent);
 }
 
 async function renderCuePNG(W, vidH, barPx, canvasH, text, st) {
@@ -1130,15 +1104,12 @@ $("convert").addEventListener("click", async () => {
       width: W, fps: clampFps(),
       style: st.style,
       barPx: barPx, barPos: st.position, barColor: st.barColor,
-      encoder: $("encoder").value,
       quality: parseInt($("quality").value, 10),
-      dither: $("dither").value,
-      maxColors: 256,
       cues: cueMeta,
     }));
     clips.forEach((c, i) => fd.append("video_" + i, c.file, "video_" + i));
 
-    dbg(`convert start: ${W}x${canvasH} @${clampFps()}fps ${totalDur().toFixed(1)}s clips=${clips.length} ${$("encoder").value} style=${st.style} cues=${active.length}`);
+    dbg(`convert start: ${W}x${canvasH} @${clampFps()}fps ${totalDur().toFixed(1)}s clips=${clips.length} style=${st.style} cues=${active.length}`);
     const r = await fetch(api("/api/jobs"), { method: "POST", body: fd });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || r.statusText);
