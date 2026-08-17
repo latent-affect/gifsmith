@@ -4,12 +4,19 @@
 # Policy (docs/CVE-AUDIT.md):
 #   * gifski 1.34.0 — version-pinned immutable URL, hard SHA-256 verify.
 #     (Zero CVEs on record for gifski as of 2026-08-05.)
-#   * FFmpeg — prefer the 9.0 line (first release plausibly containing all
-#     fixes for the June-2026 Depthfirst disclosures, CVE-2026-39210…39218);
-#     fall back to the n8.1 line with a loud warning if 9.0 static builds
-#     are not published yet. BtbN "latest" tags are moving targets, so we
-#     verify the extracted version string and print the archive SHA-256 for
-#     your records instead of pinning a hash that would break on 8.1.3.
+#   * FFmpeg — built from source by scripts/build-ffmpeg.sh, NOT fetched as a
+#     prebuilt binary. A prebuilt (BtbN static, Homebrew, apt) enables
+#     essentially every demuxer/decoder/protocol FFmpeg ships; this project's
+#     whole CVE-attack-surface story (docs/CVE-AUDIT.md) depends on running
+#     the --disable-everything + explicit-allowlist build instead. This
+#     script used to fetch a prebuilt FFmpeg directly (BtbN on Linux, brew on
+#     macOS) as a SECOND, undeclared producer of bin/ffmpeg alongside
+#     build-ffmpeg.sh — whichever ran last silently won, and re-running this
+#     script after build-ffmpeg.sh had already produced a hardened binary
+#     replaced it with a full-featured one with no warning (confirmed
+#     2026-08-16, FORE-14). Fixed by removing the second producer: this
+#     script now calls build-ffmpeg.sh directly, so there is exactly one
+#     path that ever writes bin/ffmpeg.
 #
 # Local transcription toolchain (v1.4, optional — pass --transcribe):
 #   * whisper.cpp v1.9.2 — built from source at a pinned commit (MIT). The
@@ -43,12 +50,6 @@ mkdir -p bin
 
 GIFSKI_URL="https://github.com/ImageOptim/gifski/releases/download/1.34.0/gifski-1.34.0.tar.xz"
 GIFSKI_SHA256="b9b6591aa163123d737353d9c8581efdf3234d28eeaa45329b31da905cd5a996"
-
-FF_9_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-linux64-gpl-9.0.tar.xz"
-FF_81_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz"
-# Version string + archive hash observed when this project was built/tested:
-FF_TESTED_VERSION="n8.1.2-34-g9b6c8969e0-20260804"
-FF_TESTED_SHA256="d2d47aede7ae831b964eca308d80d7f466da239002616a1702792c37a684693e"
 
 OS="$(uname -s)"
 ARCH="$(uname -m)"
@@ -85,65 +86,16 @@ if [ -n "$GIFSKI_MEMBER" ]; then
   say "gifski installed: $(bin/gifski --version)"
 fi
 
-# ---------------- ffmpeg ------------------------------------------------
-install_ffmpeg_linux() {
-  local url="$1" label="$2"
-  say "Fetching FFmpeg ($label)…"
-  fetch "$url" "$TMP/ffmpeg.tar.xz" || return 1
-  local got; got="$(sha256 "$TMP/ffmpeg.tar.xz")"
-  say "FFmpeg archive SHA-256: $got"
-  if [ "$got" = "$FF_TESTED_SHA256" ]; then
-    say "matches the archive this project was tested against"
-  else
-    warn "archive differs from the build-time tested one (expected for newer builds); version check follows"
-  fi
-  tar -C "$TMP" -xf "$TMP/ffmpeg.tar.xz"
-  local dir; dir="$(find "$TMP" -maxdepth 1 -type d -name 'ffmpeg-*' | head -1)"
-  [ -n "$dir" ] || return 1
-  install -m 0755 "$dir/bin/ffmpeg" bin/ffmpeg
-  install -m 0755 "$dir/bin/ffprobe" bin/ffprobe
-  return 0
-}
-
+# ---------------- ffmpeg (built from source, hardened -- see policy above) ----
 case "$OS" in
-  Linux)
-    [ "$ARCH" = "x86_64" ] || die "prebuilt FFmpeg here targets x86_64; on $ARCH please install ffmpeg 9.x via your package manager and re-run"
-    if install_ffmpeg_linux "$FF_9_URL" "9.0 line (preferred)"; then
-      :
-    else
-      warn "FFmpeg 9.0 static build not published yet (9.0 was released 2026-08-04)."
-      warn "Falling back to the n8.1 line. Note: fixes for CVE-2026-39210…39218 are confirmed"
-      warn "on master/9.0; their presence in 8.1.x point releases was UNVERIFIED as of 2026-08-05."
-      warn "See docs/CVE-AUDIT.md. Re-run this script later to pick up 9.0."
-      install_ffmpeg_linux "$FF_81_URL" "8.1 line (fallback)" || die "could not download FFmpeg"
-    fi
-    ;;
-  Darwin)
-    if command -v brew >/dev/null; then
-      say "macOS: installing ffmpeg via Homebrew (brew provides current releases)…"
-      brew install ffmpeg
-      ln -sf "$(command -v ffmpeg)" bin/ffmpeg
-      ln -sf "$(command -v ffprobe)" bin/ffprobe
-    else
-      die "macOS without Homebrew: install ffmpeg 9.x manually (https://evermeet.cx/ffmpeg/ or brew) and place ffmpeg+ffprobe in ./bin"
-    fi
-    ;;
-  *)
-    die "unsupported OS: $OS — see README for manual installation"
-    ;;
+  Linux|Darwin) : ;;
+  *) die "unsupported OS: $OS — see README for manual installation" ;;
 esac
 
-VER="$(bin/ffmpeg -version | head -1)"
-say "ffmpeg installed: $VER"
-case "$VER" in
-  *" n9."*|*" 9."*) say "FFmpeg 9.x — preferred line." ;;
-  *)
-    if [ "${VER#*version }" != "$VER" ] && [ "${VER%%Copyright*}" != "" ] && ! echo "$VER" | grep -q "$FF_TESTED_VERSION"; then
-      warn "installed FFmpeg version differs from both the 9.0 line and the tested build ($FF_TESTED_VERSION)."
-      warn "Check docs/CVE-AUDIT.md guidance before trusting untested builds."
-    fi
-    ;;
-esac
+say "Building FFmpeg from source (--disable-everything + explicit allowlist)…"
+say "This is the ONLY producer of bin/ffmpeg -- see scripts/build-ffmpeg.sh for why."
+bash scripts/build-ffmpeg.sh
+say "ffmpeg installed: $(bin/ffmpeg -version | head -1)"
 
 # ---------------- local transcription toolchain (optional) --------------
 # Two subprocess binaries + three model files. Same posture as ffmpeg/gifski:
@@ -284,13 +236,21 @@ else
   say "Transcribe toolchain skipped (pass --transcribe to enable the fully-local Transcribe tab)"
 fi
 
+# Appended (>>), not written fresh (>): build-ffmpeg.sh already wrote its own
+# ffmpeg provenance block (version, source hash, full enabled decoder/demuxer/
+# protocol enumeration -- the actual CVE-audit evidence) to this same file as
+# its own last step. Overwriting that with a thinner one here was the original
+# bug shape all over again, just at the log-file level instead of the binary
+# level -- don't repeat it.
+#
 # NOTE: every conditional below is a full if/fi — a bare `[ … ] && cmd` as
 # a block's last statement returns 1 under `set -e` when the test fails and
 # would abort the script after an otherwise-successful install (round-4
 # review finding).
 {
+  echo
+  echo "--- setup-tools.sh additional tools ---"
   echo "recorded: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "ffmpeg:  $VER"
   if [ -x bin/gifski ]; then
     echo "gifski:  $(bin/gifski --version)"
   fi
@@ -311,5 +271,5 @@ fi
       echo "diar embedding: nemo_en_titanet_small sha256=$(sha256 bin/models/sherpa-embedding.onnx)"
     fi
   fi
-} > bin/TOOL-VERSIONS.txt
+} >> bin/TOOL-VERSIONS.txt
 say "Done. Versions recorded in bin/TOOL-VERSIONS.txt"

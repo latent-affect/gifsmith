@@ -73,10 +73,16 @@ together.
   but neural inference isn't bit-exact across hardware, so we're not going
   to pretend it is. See docs/ARCHITECTURE.md §Determinism.)
 - **A small attack surface, on purpose.** The server is Go standard library
-  only, zero third-party Go dependencies. Every media binary is pinned and
-  checksum-verified by `scripts/setup-tools.sh`. Full writeup in
-  [docs/CVE-AUDIT.md](docs/CVE-AUDIT.md), if you enjoy reading about the
-  things that didn't go wrong.
+  only, zero third-party Go dependencies. gifski is pinned and
+  checksum-verified; FFmpeg is built from source with `--disable-everything`
+  plus an explicit allowlist of only the decoders/demuxers/filters GIFsmith
+  actually calls (`scripts/build-ffmpeg.sh`, self-tested against the real
+  pipeline before it's ever installed) — a prebuilt FFmpeg enables hundreds
+  of parsers this app never opens, and most FFmpeg CVEs live in exactly that
+  unused long tail. `scripts/setup-tools.sh` runs the build for you as part
+  of setup; there is exactly one path that ever produces `bin/ffmpeg`. Full
+  writeup in [docs/CVE-AUDIT.md](docs/CVE-AUDIT.md), if you enjoy reading
+  about the things that didn't go wrong.
 - **The output file doesn't rat you out.** GIF has no EXIF-style container
   to leak into, so most tools are quiet by default, but we checked what
   actually slips through anyway. Turns out gifski hardcodes a small
@@ -90,7 +96,9 @@ together.
 ## Quick start
 
 ```sh
-# 1. Fetch the pinned media binaries (ffmpeg, ffprobe, gifski) into ./bin
+# 1. Fetch gifski (pinned + checksummed) and build the hardened FFmpeg from
+#    source into ./bin (scripts/build-ffmpeg.sh — see the security posture
+#    note above for why this isn't a prebuilt download)
 scripts/setup-tools.sh
 
 # 2. (Optional but recommended) fetch the OFL meme fonts into ./fonts
@@ -105,10 +113,18 @@ go build -o gifsmith-server .
 #    or      frontend/index.html           (double-click; same file, CORS-ready)
 ```
 
+Building FFmpeg from source needs a C toolchain: `cc`, `make`, `pkg-config`,
+and ideally `nasm` or `yasm` (the build still works without them, just
+slower — no optimized assembly). macOS: `xcode-select --install`. Debian/
+Ubuntu: `apt install build-essential nasm pkg-config`.
+
 **Windows:** grab the archives by hand instead, `win/gifski.exe` from the
 gifski 1.34.0 release and a BtbN `win64-gpl` FFmpeg build. Drop
 `ffmpeg.exe`, `ffprobe.exe`, and `gifski.exe` into `bin\`, then `go build`
-same as above.
+same as above. (`scripts/build-ffmpeg.sh` is Unix-only; Windows keeps the
+prebuilt-binary path, so its FFmpeg carries the full upstream feature set —
+see docs/CVE-AUDIT.md before shipping a Windows build in a
+security-sensitive context.)
 
 Server flags: `-port` (default 8437), `-warn-mb` (default 30.2),
 `-max-upload-mb` (default 2048), `-tools` (binaries dir), `-fonts`
