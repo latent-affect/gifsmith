@@ -449,6 +449,7 @@ function setActiveClip(i) {
   $("playRow").style.display = ""; $("trimRow").style.display = "";
   $("trimStart").value = c.trimStart.toFixed(2);
   $("trimEnd").value = c.trimEnd.toFixed(2);
+  updateSeekTrimIndicator();
   renderClipList();
 }
 
@@ -518,11 +519,62 @@ function renderClipList() {
 }
 
 video.addEventListener("loadedmetadata", drawPreview);
-video.addEventListener("timeupdate", () => { $("seek").value = Math.round(video.currentTime / videoDur * 1000) || 0; $("timeLabel").textContent = video.currentTime.toFixed(1) + "s"; });
+// Preview playback must respect the active clip's trim window (2026-08-16
+// fix -- previously play() had zero trim awareness at all: it played from
+// wherever currentTime happened to be, straight through to the end of the
+// raw file, regardless of trimStart/trimEnd. The actual GIF export was
+// never affected by this -- clipWindow() (below) reads trimStart/trimEnd
+// correctly and the server genuinely trims -- but a preview that ignores
+// the very values you just set makes the feature LOOK broken even when
+// the export is correct, which is exactly what happened.
+video.addEventListener("timeupdate", () => {
+  $("seek").value = Math.round(video.currentTime / videoDur * 1000) || 0;
+  $("timeLabel").textContent = video.currentTime.toFixed(1) + "s";
+  if (activeClip >= 0 && !video.paused) {
+    const c = clips[activeClip];
+    if (video.currentTime >= (c.trimEnd || c.dur)) {
+      video.pause();
+      video.currentTime = c.trimStart || 0;
+    }
+  }
+});
 $("seek").addEventListener("input", () => { if (videoDur) video.currentTime = $("seek").value / 1000 * videoDur; });
-$("playBtn").addEventListener("click", () => { video.paused ? (video.play(), $("playBtn").textContent = "Pause") : (video.pause(), $("playBtn").textContent = "Play"); });
+$("playBtn").addEventListener("click", () => {
+  if (video.paused) {
+    if (activeClip >= 0) {
+      const c = clips[activeClip];
+      const a = c.trimStart || 0, b = c.trimEnd || c.dur;
+      if (video.currentTime < a || video.currentTime >= b) video.currentTime = a;
+    }
+    video.play(); $("playBtn").textContent = "Pause";
+  } else {
+    video.pause(); $("playBtn").textContent = "Play";
+  }
+});
 video.addEventListener("pause", () => $("playBtn").textContent = "Play");
 video.addEventListener("play", () => $("playBtn").textContent = "Pause");
+
+// Colors the seek slider's track so the selected trim range is visible at a
+// glance, instead of the range only existing as two numbers in boxes below
+// it (2026-08-16 -- reported as "the slider is non-intuitive"). Deliberately
+// calls clipWindow() (below) rather than re-deriving its own clamp: an
+// earlier version computed a/b independently and disagreed with clipWindow
+// on the trimEnd<=trimStart edge case (clipWindow synthesizes a minimum
+// 0.05s exportable window; the independent version showed a zero-width,
+// seemingly-empty selection for that same state) -- currently unreachable
+// since every existing writer of trimStart/trimEnd already enforces
+// trimEnd>=trimStart+0.05, but "currently unreachable" is exactly the kind
+// of guarantee a future write path (import, paste, a new feature) can break
+// silently. One shared source of truth for what's actually exportable.
+function updateSeekTrimIndicator() {
+  if (activeClip < 0 || !videoDur) { $("seek").style.background = ""; return; }
+  const w = clipWindow(clips[activeClip]);
+  const a = Math.max(0, Math.min(w.a / videoDur * 100, 100));
+  const b = Math.max(a, Math.min(w.b / videoDur * 100, 100));
+  $("seek").style.background =
+    `linear-gradient(to right, var(--panel2) 0%, var(--panel2) ${a}%, ` +
+    `var(--accent) ${a}%, var(--accent) ${b}%, var(--panel2) ${b}%, var(--panel2) 100%)`;
+}
 
 // Trim edits write into the ACTIVE clip's model (per-clip trims, v1.3).
 function applyTrim() {
@@ -532,6 +584,7 @@ function applyTrim() {
   let b = parseFloat($("trimEnd").value); if (!isFinite(b)) b = c.dur;
   c.trimStart = Math.max(0, Math.min(a, c.dur));
   c.trimEnd = Math.max(c.trimStart + 0.05, Math.min(b, c.dur));
+  updateSeekTrimIndicator();
   renderClipList(); updateEstimate();
 }
 $("trimStart").addEventListener("input", applyTrim);
