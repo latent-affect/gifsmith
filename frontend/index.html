@@ -55,6 +55,30 @@
   }
   select { width: 130px; }
   input[type=range] { flex: 1; min-width: 110px; }
+  #trimSlider { position: relative; flex: 1; min-width: 160px; height: 34px; }
+  #trimSlider .track {
+    position: absolute; left: 0; right: 0; top: 50%; height: 6px;
+    transform: translateY(-50%); border-radius: 999px; background: var(--panel2);
+    pointer-events: none;
+  }
+  #trimSlider input[type=range] {
+    position: absolute; left: 0; right: 0; top: 0; width: 100%; height: 34px;
+    margin: 0; background: transparent; pointer-events: none;
+    -webkit-appearance: none; appearance: none; z-index: 2;
+  }
+  #trimSlider input[type=range]::-webkit-slider-runnable-track { background: transparent; height: 34px; }
+  #trimSlider input[type=range]::-moz-range-track { background: transparent; height: 34px; }
+  #trimSlider input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; pointer-events: auto;
+    width: 18px; height: 18px; border-radius: 50%; background: #fff;
+    border: 2px solid var(--accent); margin-top: 8px; cursor: grab;
+  }
+  #trimSlider input[type=range]::-moz-range-thumb {
+    pointer-events: auto; width: 18px; height: 18px; border-radius: 50%;
+    background: #fff; border: 2px solid var(--accent); cursor: grab;
+  }
+  .trimLabels { justify-content: space-between; }
+  .trimLabels input[type=number] { width: 78px; text-align: center; }
   input[type=file] { color: var(--muted); font-size: 13px; max-width: 240px; }
   button {
     background: var(--accent); border: 0; color: #0b1220; font-weight: 600;
@@ -158,15 +182,17 @@
       </div>
       <div class="row" id="playRow" style="display:none">
         <button class="secondary" id="playBtn">Play</button>
-        <input type="range" id="seek" min="0" max="1000" value="0">
+        <div id="trimSlider">
+          <div class="track"></div>
+          <input type="range" id="trimStartRange" min="0" max="1000" value="0" title="trim start — drag to set">
+          <input type="range" id="trimEndRange" min="0" max="1000" value="1000" title="trim end — drag to set">
+        </div>
         <span class="small" id="timeLabel">0.0s</span>
       </div>
-      <div class="row" id="trimRow" style="display:none">
-        <label>Trim</label>
-        <input type="number" id="trimStart" min="0" step="0.1" value="0" title="start (s)"> →
-        <input type="number" id="trimEnd" min="0" step="0.1" value="0" title="end (s)">
-        <button class="secondary" id="setStart" title="set start to playhead">⇤ here</button>
-        <button class="secondary" id="setEnd" title="set end to playhead">here ⇥</button>
+      <div class="row trimLabels" id="trimRow" style="display:none">
+        <input type="number" id="trimStart" min="0" step="0.1" value="0" title="trim start (s)">
+        <button class="secondary" id="trimPreview" title="play the trimmed segment from the start">▶ Trim</button>
+        <input type="number" id="trimEnd" min="0" step="0.1" value="0" title="trim end (s)">
       </div>
     </div>
 
@@ -447,9 +473,7 @@ function setActiveClip(i) {
   $("videoInfo").textContent = `clip ${i + 1}/${clips.length}: ${c.w}×${c.h} · ${c.dur.toFixed(1)}s`;
   $("dropHint").style.display = "none";
   $("playRow").style.display = ""; $("trimRow").style.display = "";
-  $("trimStart").value = c.trimStart.toFixed(2);
-  $("trimEnd").value = c.trimEnd.toFixed(2);
-  updateSeekTrimIndicator();
+  syncTrimUI();
   renderClipList();
 }
 
@@ -528,7 +552,6 @@ video.addEventListener("loadedmetadata", drawPreview);
 // the very values you just set makes the feature LOOK broken even when
 // the export is correct, which is exactly what happened.
 video.addEventListener("timeupdate", () => {
-  $("seek").value = Math.round(video.currentTime / videoDur * 1000) || 0;
   $("timeLabel").textContent = video.currentTime.toFixed(1) + "s";
   if (activeClip >= 0 && !video.paused) {
     const c = clips[activeClip];
@@ -538,7 +561,6 @@ video.addEventListener("timeupdate", () => {
     }
   }
 });
-$("seek").addEventListener("input", () => { if (videoDur) video.currentTime = $("seek").value / 1000 * videoDur; });
 $("playBtn").addEventListener("click", () => {
   if (video.paused) {
     if (activeClip >= 0) {
@@ -553,44 +575,132 @@ $("playBtn").addEventListener("click", () => {
 });
 video.addEventListener("pause", () => $("playBtn").textContent = "Play");
 video.addEventListener("play", () => $("playBtn").textContent = "Pause");
+// Unlike Play/Pause (which resumes wherever the video currently sits), Trim
+// always restarts the preview from trimStart -- the one thing "resume" can't
+// do, and the reason this button earns its keep next to Play rather than
+// just duplicating it.
+$("trimPreview").addEventListener("click", () => {
+  if (activeClip < 0) return;
+  const c = clips[activeClip];
+  video.pause();
+  video.currentTime = c.trimStart || 0;
+  video.play(); $("playBtn").textContent = "Pause";
+});
 
-// Colors the seek slider's track so the selected trim range is visible at a
+function trimToSlider(t) { return videoDur ? Math.round(t / videoDur * 1000) : 0; }
+function sliderToTrim(v) { return videoDur ? (v / 1000 * videoDur) : 0; }
+// Keeps the two drag handles from crossing (native range inputs otherwise
+// let a handle slide straight past its partner) and, as a side effect, holds
+// a small gap between them so overlapping thumbs stay independently
+// grabbable instead of stacking exactly on top of each other.
+// Capped at the ACTUAL current gap (never wider than what's really there): a
+// fixed gap here would, for a trim window already near the model's 0.05s
+// minimum, set .min/.max tighter than the value syncTrimUI just wrote --
+// browsers clamp a .value to a newly-set .min/.max immediately, so the
+// handle would silently snap away from the number box right after being
+// synced to it. Confirmed live (2026-08-16): typing 10.00/10.05 on a 20s
+// clip left the end handle sitting at 10.10, 0.05s off the box it was just
+// set to match. Capping the enforced gap at the real gap removes the case
+// entirely -- it can still stop TWO SEPARATE writes from crossing past each
+// other, it just never re-clamps a value against itself.
+const HANDLE_GAP = 5; // slider units (1000 = full duration) -- 0.5% of clip length
+function updateHandleBounds() {
+  const a = +$("trimStartRange").value, b = +$("trimEndRange").value;
+  const gap = Math.min(HANDLE_GAP, Math.max(0, b - a));
+  $("trimStartRange").max = Math.max(0, b - gap);
+  $("trimEndRange").min = Math.min(1000, a + gap);
+}
+
+// Colors the trim slider's track so the selected range is visible at a
 // glance, instead of the range only existing as two numbers in boxes below
-// it (2026-08-16 -- reported as "the slider is non-intuitive"). Deliberately
-// calls clipWindow() (below) rather than re-deriving its own clamp: an
-// earlier version computed a/b independently and disagreed with clipWindow
-// on the trimEnd<=trimStart edge case (clipWindow synthesizes a minimum
-// 0.05s exportable window; the independent version showed a zero-width,
-// seemingly-empty selection for that same state) -- currently unreachable
-// since every existing writer of trimStart/trimEnd already enforces
-// trimEnd>=trimStart+0.05, but "currently unreachable" is exactly the kind
-// of guarantee a future write path (import, paste, a new feature) can break
-// silently. One shared source of truth for what's actually exportable.
+// it (2026-08-16 -- reported as "the slider is non-intuitive"; redesigned
+// again the same day into an actual two-handle drag slider after the first
+// fix -- a single thumb plus "here" buttons -- was reported as still clunky).
+// Deliberately calls clipWindow() (below) rather than re-deriving its own
+// clamp: an earlier version computed a/b independently and disagreed with
+// clipWindow on the trimEnd<=trimStart edge case (clipWindow synthesizes a
+// minimum 0.05s exportable window; the independent version showed a
+// zero-width, seemingly-empty selection for that same state) -- currently
+// unreachable since every existing writer of trimStart/trimEnd already
+// enforces trimEnd>=trimStart+0.05, but "currently unreachable" is exactly
+// the kind of guarantee a future write path (import, paste, a new feature)
+// can break silently. One shared source of truth for what's actually
+// exportable.
 function updateSeekTrimIndicator() {
-  if (activeClip < 0 || !videoDur) { $("seek").style.background = ""; return; }
+  const track = document.querySelector("#trimSlider .track");
+  if (!track) return;
+  if (activeClip < 0 || !videoDur) { track.style.background = "var(--panel2)"; return; }
   const w = clipWindow(clips[activeClip]);
   const a = Math.max(0, Math.min(w.a / videoDur * 100, 100));
   const b = Math.max(a, Math.min(w.b / videoDur * 100, 100));
-  $("seek").style.background =
+  track.style.background =
     `linear-gradient(to right, var(--panel2) 0%, var(--panel2) ${a}%, ` +
     `var(--accent) ${a}%, var(--accent) ${b}%, var(--panel2) ${b}%, var(--panel2) 100%)`;
 }
 
-// Trim edits write into the ACTIVE clip's model (per-clip trims, v1.3).
-function applyTrim() {
+// Single source of truth for a trim edit, regardless of which of the four
+// controls (two number boxes, two drag handles) produced it -- all four
+// read back from clips[activeClip] via syncTrimUI() rather than trusting
+// their own local value, so they can never drift out of sync with each other.
+function setTrim(a, b, seekTo) {
   if (activeClip < 0) return;
   const c = clips[activeClip];
-  let a = parseFloat($("trimStart").value); if (!isFinite(a)) a = 0;
-  let b = parseFloat($("trimEnd").value); if (!isFinite(b)) b = c.dur;
+  if (!isFinite(a)) a = c.trimStart;
+  if (!isFinite(b)) b = c.trimEnd;
   c.trimStart = Math.max(0, Math.min(a, c.dur));
   c.trimEnd = Math.max(c.trimStart + 0.05, Math.min(b, c.dur));
-  updateSeekTrimIndicator();
+  syncTrimUI();
   renderClipList(); updateEstimate();
+  if (seekTo !== undefined && videoDur) video.currentTime = Math.max(0, Math.min(seekTo, videoDur));
 }
-$("trimStart").addEventListener("input", applyTrim);
-$("trimEnd").addEventListener("input", applyTrim);
-$("setStart").addEventListener("click", () => { if (activeClip < 0) return; $("trimStart").value = video.currentTime.toFixed(2); applyTrim(); });
-$("setEnd").addEventListener("click", () => { if (activeClip < 0) return; $("trimEnd").value = video.currentTime.toFixed(2); applyTrim(); });
+function syncTrimUI() {
+  if (activeClip < 0 || !videoDur) return;
+  const w = clipWindow(clips[activeClip]);
+  // Widen both ranges' min/max to the full track BEFORE writing new values:
+  // the PREVIOUS window's now-stale bounds can otherwise pre-clamp the very
+  // value being written here (a value assignment respects the input's
+  // CURRENT min/max at the moment it's set), so a handle could silently
+  // snap to the old bound instead of landing on the new one -- before
+  // updateHandleBounds() below even runs. Confirmed live (2026-08-16):
+  // narrowing the window via the number boxes alone (not the sliders, which
+  // self-clamp live) left the end handle stuck 0.05s off the box it was
+  // just synced to.
+  $("trimStartRange").min = 0; $("trimStartRange").max = 1000;
+  $("trimEndRange").min = 0; $("trimEndRange").max = 1000;
+  $("trimStart").value = w.a.toFixed(2);
+  $("trimEnd").value = w.b.toFixed(2);
+  $("trimStartRange").value = trimToSlider(w.a);
+  $("trimEndRange").value = trimToSlider(w.b);
+  updateHandleBounds();
+  updateSeekTrimIndicator();
+}
+$("trimStart").addEventListener("input", () => {
+  const a = parseFloat($("trimStart").value);
+  setTrim(a, clips[activeClip] ? clips[activeClip].trimEnd : videoDur, a);
+});
+$("trimEnd").addEventListener("input", () => {
+  const b = parseFloat($("trimEnd").value);
+  setTrim(clips[activeClip] ? clips[activeClip].trimStart : 0, b, b);
+});
+$("trimStartRange").addEventListener("input", () => {
+  const a = sliderToTrim(+$("trimStartRange").value);
+  setTrim(a, clips[activeClip] ? clips[activeClip].trimEnd : videoDur, a);
+});
+$("trimEndRange").addEventListener("input", () => {
+  const b = sliderToTrim(+$("trimEndRange").value);
+  setTrim(clips[activeClip] ? clips[activeClip].trimStart : 0, b, b);
+});
+// A pressed-on thumb should draw above its sibling for THIS drag; native
+// range inputs otherwise resolve overlapping hit-tests by DOM/z-order alone,
+// which can leave one handle permanently un-grabbable once the other sits on
+// top of it.
+function bringToFront(el) {
+  $("trimStartRange").style.zIndex = 2;
+  $("trimEndRange").style.zIndex = 2;
+  el.style.zIndex = 3;
+}
+$("trimStartRange").addEventListener("pointerdown", () => bringToFront($("trimStartRange")));
+$("trimEndRange").addEventListener("pointerdown", () => bringToFront($("trimEndRange")));
 
 /* ---------- assembled-timeline math (mirrors the server) ---------- */
 function clipWindow(c) {
@@ -893,7 +1003,7 @@ function renderPlatforms(bytes) {
     el.appendChild(chip);
   }
 }
-// trimStart/trimEnd are NOT in this list: applyTrim owns them (it must
+// trimStart/trimEnd are NOT in this list: setTrim owns them (it must
 // write the active clip's model before the estimate reads totalDur()).
 ["width","fps","encoder","dither","quality",
  "style","fontSize","stroke","caps","font","position","barColor"]
