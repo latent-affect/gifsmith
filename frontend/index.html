@@ -1145,37 +1145,7 @@ async function poll() {
       a.href = api("/api/jobs/" + id + "/result");
       a.download = "gifsmith.gif";
       a.textContent = "Download GIF";
-      // "Show in folder" (Chrome downloads-page phrasing) rather than
-      // "Reveal in Finder": this button works cross-platform (Finder on
-      // macOS, Explorer on Windows, xdg-open's folder on Linux — see
-      // reveal.go), so the label shouldn't name one OS's file manager.
-      // It opens the SERVER's own copy of the GIF (the exact bytes the
-      // download link above serves) — a web page has no way to know where
-      // the browser itself ultimately saved a downloaded copy, so that
-      // distinction is spelled out in the title tooltip rather than glossed
-      // over.
-      const reveal = document.createElement("button");
-      reveal.type = "button"; reveal.className = "secondary";
-      reveal.textContent = "Show in folder";
-      reveal.title = "Opens this server's own copy of the file — not necessarily where your browser saved a downloaded copy, which a web page can't see.";
-      const pathSpan = document.createElement("span");
-      pathSpan.className = "small";
-      reveal.addEventListener("click", async () => {
-        reveal.disabled = true;
-        try {
-          const rr = await fetch(api("/api/jobs/" + id + "/reveal"), { method: "POST" });
-          const rd = await rr.json();
-          if (!rr.ok) throw new Error(rd.error || rr.statusText);
-          pathSpan.textContent = " " + rd.path;
-          dbg("revealed job output: " + rd.path);
-        } catch (e) {
-          pathSpan.textContent = " couldn't open the file manager: " + e.message;
-          dbg("reveal FAILED: " + e.message);
-        } finally {
-          reveal.disabled = false;
-        }
-      });
-      p.append(a, ` — ${mb.toFixed(1)} MB · ${Number(s.width)}×${Number(s.height)} @ ${Number(s.fps)}fps · ${Number(s.duration).toFixed(1)}s `, reveal, pathSpan);
+      p.append(a, ` — ${mb.toFixed(1)} MB · ${Number(s.width)}×${Number(s.height)} @ ${Number(s.fps)}fps · ${Number(s.duration).toFixed(1)}s`);
       $("result").replaceChildren(p);
       renderPlatforms(s.outBytes);
       const over = warnMB() > 0 && mb > warnMB();

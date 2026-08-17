@@ -40,12 +40,11 @@ type Job struct {
 	Duration float64  `json:"duration"` // encoded seconds
 	Created  int64    `json:"created"`  // unix seconds
 
-	dir        string
-	outPath    string
-	timeout    time.Duration
-	cancel     context.CancelFunc
-	mu         sync.Mutex
-	lastReveal time.Time // guarded by mu; last accepted /reveal call, see CheckReveal
+	dir     string
+	outPath string
+	timeout time.Duration
+	cancel  context.CancelFunc
+	mu      sync.Mutex
 }
 
 func (j *Job) snapshot() Job {
@@ -59,15 +58,14 @@ func (j *Job) snapshot() Job {
 }
 
 type JobManager struct {
-	mu          sync.Mutex
-	jobs        map[string]*Job
-	reserved    map[string]bool // ids handed out by NewJobDir, not yet Submitted
-	tmpRoot     string
-	tools       *Tools
-	sem         chan struct{} // encode concurrency = 1
-	ttl         time.Duration
-	stop        chan struct{}
-	revealTimes []time.Time // guarded by mu; rolling window, see CheckReveal
+	mu       sync.Mutex
+	jobs     map[string]*Job
+	reserved map[string]bool // ids handed out by NewJobDir, not yet Submitted
+	tmpRoot  string
+	tools    *Tools
+	sem      chan struct{} // encode concurrency = 1
+	ttl      time.Duration
+	stop     chan struct{}
 }
 
 func NewJobManager(tmpRoot string, tools *Tools) *JobManager {
@@ -118,29 +116,6 @@ func encodeTimeout(totalDuration float64) time.Duration {
 
 // ErrTooManyJobs is returned by NewJobDir at the MaxLiveJobs cap.
 var ErrTooManyJobs = fmt.Errorf("too many active jobs; wait for one to finish or delete finished jobs")
-
-// revealCooldown and the global reveal-rate window bound how often
-// /api/jobs/{id}/reveal can pop the OS file manager (adversarial-review
-// finding: unlike every other job endpoint, a hostile page that created the
-// job already knows its own ID — the crypto-random-ID unguessability that
-// protects everything else doesn't help here, see reveal.go). revealCooldown
-// alone stops looping ONE job; the global window additionally stops
-// round-robining across several finished jobs to route around it — a
-// finished job stays revealable until its 2h TTL sweep, so MaxLiveJobs alone
-// doesn't bound the multi-job variant.
-const (
-	revealCooldown     = 3 * time.Second
-	revealWindow       = 10 * time.Second
-	revealMaxPerWindow = 5
-)
-
-// ErrRevealCooldown is returned by CheckReveal when this job's reveal was
-// already triggered within revealCooldown.
-var ErrRevealCooldown = fmt.Errorf("reveal already triggered for this job; wait a few seconds and try again")
-
-// ErrRevealRateLimited is returned by CheckReveal when the global reveal
-// rate limit (across all jobs) was hit.
-var ErrRevealRateLimited = fmt.Errorf("reveal rate limit reached; wait a moment and try again")
 
 // NewJobDir reserves a slot and creates the private directory for an
 // incoming upload. The reservation closes the check-then-act gap between
@@ -306,52 +281,6 @@ func (m *JobManager) ResultPath(id string) (string, bool) {
 		return "", false
 	}
 	return j.outPath, true
-}
-
-// pruneRevealWindowLocked drops reveal timestamps older than revealWindow.
-// Callers hold m.mu. Mirrors TranscribeManager.pruneRateWindowLocked.
-func (m *JobManager) pruneRevealWindowLocked(now time.Time) {
-	keep := m.revealTimes[:0]
-	for _, t := range m.revealTimes {
-		if now.Sub(t) < revealWindow {
-			keep = append(keep, t)
-		}
-	}
-	m.revealTimes = keep
-}
-
-// CheckReveal enforces the per-job cooldown and the global reveal rate
-// limit. Callers (handleJobReveal) check the job is actually JobDone via
-// ResultPath first — "job is not finished" stays a 409, unaffected by this.
-// The per-job check is evaluated — and can reject — before the global
-// window is touched, so hammering one already-cooling-down job cannot burn
-// the shared budget and starve reveals of unrelated jobs. Both timestamps
-// commit on the attempt, not on success (mirrors NewJobDir's
-// reserve-before-work idiom), so a flaky/unsupported-platform failure in
-// revealInFileManager can't be used to get free cooldown-exempt retries.
-func (m *JobManager) CheckReveal(id string) error {
-	j, ok := m.Get(id)
-	if !ok {
-		return fmt.Errorf("no such job")
-	}
-	now := time.Now()
-
-	j.mu.Lock()
-	if !j.lastReveal.IsZero() && now.Sub(j.lastReveal) < revealCooldown {
-		j.mu.Unlock()
-		return ErrRevealCooldown
-	}
-	j.lastReveal = now
-	j.mu.Unlock()
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.pruneRevealWindowLocked(now)
-	if len(m.revealTimes) >= revealMaxPerWindow {
-		return ErrRevealRateLimited
-	}
-	m.revealTimes = append(m.revealTimes, now)
-	return nil
 }
 
 // sweep deletes expired jobs and their directories.

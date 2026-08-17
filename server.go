@@ -63,7 +63,6 @@ func NewServer(tools *Tools, jobs *JobManager, maxUploadMB int64, warnMB float64
 	s.mux.HandleFunc("GET /api/jobs/{id}", s.handleJobStatus)
 	s.mux.HandleFunc("DELETE /api/jobs/{id}", s.handleJobCancel)
 	s.mux.HandleFunc("GET /api/jobs/{id}/result", s.handleJobResult)
-	s.mux.HandleFunc("POST /api/jobs/{id}/reveal", s.handleJobReveal)
 	s.mux.HandleFunc("GET /api/debug/log", s.handleDebugLog)
 	s.mux.HandleFunc("POST /api/transcribe", s.handleTranscribeCreate)
 	s.mux.HandleFunc("GET /api/transcribe/{id}", s.handleTranscribeStatus)
@@ -673,35 +672,6 @@ func (s *Server) handleJobResult(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/gif")
 	w.Header().Set("Content-Disposition", `attachment; filename="gifsmith.gif"`)
 	http.ServeFile(w, r, p)
-}
-
-// handleJobReveal opens the OS file manager on this job's output GIF —
-// the server's own copy in its job directory (the exact bytes the
-// download link serves), not wherever the browser ultimately saved a
-// downloaded copy, which a web page has no way to know or control. See
-// reveal.go for the cross-platform command and the security reasoning for
-// why this is safe to expose with the same permissive CORS as everything
-// else here (path is always server-derived from the job ID, never
-// client-supplied).
-func (s *Server) handleJobReveal(w http.ResponseWriter, r *http.Request) {
-	j, ok := s.jobFromPath(w, r)
-	if !ok {
-		return
-	}
-	p, ready := s.jobs.ResultPath(j.ID)
-	if !ready {
-		httpError(w, http.StatusConflict, "job is not finished")
-		return
-	}
-	if err := s.jobs.CheckReveal(j.ID); err != nil {
-		httpError(w, http.StatusTooManyRequests, "%v", err)
-		return
-	}
-	if err := revealInFileManager(r.Context(), p); err != nil {
-		httpError(w, http.StatusInternalServerError, "%s", errBrief(err))
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"path": p})
 }
 
 // ---------- helpers ----------

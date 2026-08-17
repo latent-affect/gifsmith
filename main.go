@@ -30,7 +30,7 @@ func main() {
 	port := flag.Int("port", 8437, "port to listen on (loopback only)")
 	toolsDir := flag.String("tools", defaultToolsDir(), "directory containing ffmpeg/ffprobe/gifski binaries (falls back to $PATH)")
 	fontsDir := flag.String("fonts", defaultFontsDir(), "directory containing fetched OFL fonts (see scripts/fetch-fonts.sh)")
-	tmpDir := flag.String("tmp", "", "working directory for jobs (default: OS temp)")
+	tmpDir := flag.String("tmp", "", "working directory for jobs (default: jobs/ next to the program)")
 	maxUploadMB := flag.Int64("max-upload-mb", 2048, "maximum upload size in MB")
 	warnMB := flag.Float64("warn-mb", DefaultWarnMB, "output-size warning threshold in MB (default = mean of verified GIF-autoplay platform limits)")
 	whisperModel := flag.String("whisper-model", "", "path to a whisper.cpp ggml model file (default: models/ggml-*.bin next to the tools dir)")
@@ -55,7 +55,7 @@ func main() {
 
 	root := *tmpDir
 	if root == "" {
-		root = filepath.Join(os.TempDir(), "gifsmith")
+		root = defaultJobsDir()
 	}
 	root = filepath.Join(root, fmt.Sprintf("run-%d", os.Getpid()))
 	if err := os.MkdirAll(root, 0o700); err != nil {
@@ -108,6 +108,25 @@ func defaultFontsDir() string {
 		return filepath.Join(filepath.Dir(exe), "fonts")
 	}
 	return "fonts"
+}
+
+// defaultJobsDir mirrors defaultToolsDir/defaultFontsDir. Previously this
+// defaulted to os.TempDir() (on macOS, something like
+// /var/folders/xx/yyyy/T/) — a real per-session directory, not a shared or
+// privileged one, but it reads as an alarming, unfamiliar path to a
+// non-technical user, and at a workplace with endpoint-security monitoring,
+// writes under /var specifically are a more likely thing for that tooling
+// to flag than writes under the app's own folder or the user's home
+// directory. Job output was never anything but scratch state the user was
+// always meant to reach through the Download button anyway (removed the
+// "Show in folder" feature that exposed this path directly — see
+// GIF-9/GIF-10), so there's no reason for it to live outside GIFsmith's own
+// footprint on disk.
+func defaultJobsDir() string {
+	if exe, err := os.Executable(); err == nil {
+		return filepath.Join(filepath.Dir(exe), "jobs")
+	}
+	return "jobs"
 }
 
 // findTools resolves ffmpeg, ffprobe and gifski: preferred from dir, else
