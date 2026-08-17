@@ -15,9 +15,12 @@ package main
 //   - No shell is ever invoked: exec.Command with fixed argv arrays.
 //   - User-supplied names never become paths; all files live in a
 //     server-generated job directory with server-generated names.
-//   - The filter graph is written to a file (-filter_complex_script/
-//     -/filter_script) so no cue count can overflow an argv or embed
-//     metacharacters into a command line.
+//   - The filter graph is written to a file, loaded via -/filter_complex
+//     (FFmpeg 7.0+'s generalized "read this option's value from a file"
+//     syntax; the older -filter_complex_script was deprecated 2024-01 and
+//     removed in FFmpeg 9.0 -- see the 2026-08-16 fix note below) so no
+//     cue count can overflow an argv or embed metacharacters into a
+//     command line.
 //   - Numeric settings are clamped server-side regardless of client checks.
 
 import (
@@ -522,7 +525,7 @@ func Run(ctx context.Context, t *Tools, dir string, spec *JobSpec, probes []*Pro
 			return fmt.Errorf("gifski binary not available; run scripts/setup-tools.sh or choose the ffmpeg encoder")
 		}
 		ffArgs := append(append([]string{}, inputArgs...),
-			"-filter_complex_script", script, "-map", "[out]")
+			"-/filter_complex", script, "-map", "[out]")
 		if err := runGifskiPath(ctx, t, spec, ffArgs, dur, outPath, cb); err != nil {
 			return err
 		}
@@ -731,7 +734,7 @@ func runPalettePath(ctx context.Context, t *Tools, spec *JobSpec, dir, script st
 		return err
 	}
 	p1 := append(append([]string{}, inputArgs...),
-		"-filter_complex_script", s1, "-map", "[pal]",
+		"-/filter_complex", s1, "-map", "[pal]",
 		"-frames:v", "1", "-update", "1", "-y", palette)
 	cmd1 := exec.CommandContext(ctx, t.FFmpeg, append(p1, progressArgs()...)...)
 	err1 := captureProgress(cmd1, dur, scaleCB(cb, 0, 0.5))
@@ -752,7 +755,7 @@ func runPalettePath(ctx context.Context, t *Tools, spec *JobSpec, dir, script st
 		return err
 	}
 	p2 := append(append([]string{}, inputArgs...), "-i", palette,
-		"-filter_complex_script", s2, "-map", "[final]",
+		"-/filter_complex", s2, "-map", "[final]",
 		"-loop", "0", "-y", outPath)
 	cmd2 := exec.CommandContext(ctx, t.FFmpeg, append(p2, progressArgs()...)...)
 	err2 := captureProgress(cmd2, dur, scaleCB(cb, 0.5, 1))
