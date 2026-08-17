@@ -17,3 +17,9 @@
 /.claude/
 /viz_validation/
 .warden/
+
+# operator's local working notes (private dev workflow, not shipped project docs)
+/CLAUDE.md
+
+# OS cruft
+.DS_Store
