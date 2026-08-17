@@ -10,6 +10,7 @@
 /tmp/
 /jobs/
 *.gif
+!/docs/media/*.gif
 /.ffmpeg-src/
 
 # local dev tooling (hooks/settings), not part of the shipped project

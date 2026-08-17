@@ -1,5 +1,7 @@
 # GIFsmith
 
+![GIFsmith demo](docs/media/demo.gif)
+
 Point it at a video. GIFsmith transcribes the dialogue itself, or — if the
 clip has no audio at all — finds the actual scene cuts and gives you a blank
 row at each one. Either way you get real, locally-computed timing to write
