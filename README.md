@@ -36,7 +36,8 @@ together.
   track at all, there's nothing for whisper to transcribe, so GIFsmith
   falls back to FFmpeg's own scene-cut detection and hands you a blank row
   at every camera cut instead of a dead end — still derived from the actual
-  footage, never a file you'd have to trust. `scripts/setup-tools.sh --transcribe` fetches the binaries and
+  footage, never a file you'd have to trust.
+  `scripts/setup-tools.sh --transcribe` fetches the binaries and
   diarization models once, with hard SHA-256 pins (the whisper model is
   checked against upstream's published hash, and you can pin your own via
   `WHISPER_MODEL_SHA256`). After that, it's offline for good.
