@@ -93,6 +93,7 @@
   .cue .t { font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--muted); white-space: nowrap; cursor: pointer; }
   .cue input[type=text] { flex: 1; width: auto; font-size: 13px; }
   .cue input[type=checkbox] { accent-color: var(--accent); }
+  .cue .cuePos { width: 44px; padding: 2px 4px; font-size: 13px; flex: none; }
   #estimate { font-size: 14px; margin: 10px 0 4px; }
   #estimate b { font-size: 17px; }
   .banner { border-radius: 8px; padding: 10px 12px; margin: 8px 0; font-size: 13.5px; display: none; }
@@ -238,6 +239,7 @@
       </div>
       <div class="row"><label>Size</label><input type="range" id="fontSize" min="4" max="18" value="9" step="0.5"><span class="small" id="fontSizeLabel">9%</span></div>
       <div class="row"><label>Outline</label><input type="range" id="stroke" min="0" max="16" value="8" step="1"><span class="small" id="strokeLabel">8%</span></div>
+      <div class="row"><label>Margin</label><input type="range" id="margin" min="0" max="12" value="3.5" step="0.5"><span class="small" id="marginLabel">3.5%</span></div>
       <div class="row"><label>ALL CAPS</label><input type="checkbox" id="caps" checked></div>
     </div>
 
@@ -416,7 +418,7 @@ $("serverUrl").addEventListener("change", ping);
 let clips = []; // {file, url, dur, w, h, trimStart, trimEnd}
 let activeClip = -1;
 let videoDur = 0; // duration of the ACTIVE clip (drives the preview player)
-let cues = []; // {clip, start, end, text, enabled}
+let cues = []; // {clip, start, end, text, enabled, pos: "left"|"center"|"right"}
 let job = null, pollTimer = null;
 
 /* ---------- video loading & preview ---------- */
@@ -763,6 +765,7 @@ function settings() {
     font: $("font").value,
     fontSizePct: parseFloat($("fontSize").value),
     strokePct: parseFloat($("stroke").value),
+    marginPct: parseFloat($("margin").value),
     caps: $("caps").checked,
   };
 }
@@ -816,16 +819,18 @@ let barPxCache = null; // { key, value }
 const barMeasureCtx = document.createElement("canvas").getContext("2d"); // reused, not recreated per call
 function computeBarPx(W, vidH, stArg) {
   const st = stArg || settings();
-  let key = `${W}x${vidH}|${st.font}|${st.fontSizePct}|${st.caps ? 1 : 0}`;
-  for (const q of cues) { if (q.enabled) key += `|${q.text}`; }
+  let key = `${W}x${vidH}|${st.font}|${st.fontSizePct}|${st.caps ? 1 : 0}|${st.marginPct ?? 3.5}`;
+  for (const q of cues) { if (q.enabled) key += `|${q.pos || "center"}|${q.text}`; }
   if (barPxCache && barPxCache.key === key) return barPxCache.value;
 
   const fp = fontPx(vidH, st), lh = Math.round(fp * 1.25);
   barMeasureCtx.font = `${fp}px ${st.font}`;
+  const marginPx = Math.round(vidH * (st.marginPct ?? 3.5) / 100);
   let maxLines = 1;
   for (const q of cues.filter(q => q.enabled)) {
     const t = st.caps ? q.text.toUpperCase() : q.text;
-    maxLines = Math.max(maxLines, wrapText(barMeasureCtx, t, W * 0.94).length);
+    const wrapW = horizontalBox(W, marginPx, q.pos).wrapW;
+    maxLines = Math.max(maxLines, wrapText(barMeasureCtx, t, wrapW).length);
   }
   let bar = maxLines * lh + Math.round(fp * 0.7);
   bar += bar % 2;
@@ -834,27 +839,43 @@ function computeBarPx(W, vidH, stArg) {
   return value;
 }
 
+// hPos ("left"|"center"|"right", default "center") is PER-CUE, unlike every
+// other caption setting here which is global -- it's the one knob meant to
+// differ cue-to-cue within the same video, for the two-speakers-on-screen
+// (or one off-center face) case. horizontalBox() below is the one place
+// that turns hPos into concrete geometry; everything else just asks it for
+// the zone's center-x, text-align, and available wrap width.
+function horizontalBox(W, marginPx, hPos) {
+  const zoneW = Math.max(1, W / 2 - marginPx * 1.5);
+  switch (hPos) {
+    case "left": return { cx: marginPx, align: "left", wrapW: zoneW };
+    case "right": return { cx: W - marginPx, align: "right", wrapW: zoneW };
+    default: return { cx: W / 2, align: "center", wrapW: W * 0.94 };
+  }
+}
+
 // Draws one cue onto ctx sized W×canvasH. Classic: stroked text over video
 // area. Bar: black/white text inside the bar region. Transparent elsewhere —
 // the server pads the bar background color itself.
 // stArg: pass a settings snapshot during export so mid-conversion UI changes
 // cannot desynchronize the PNGs from the submitted settings JSON.
-function drawCaption(ctx, W, vidH, barPx, canvasH, text, stArg) {
+function drawCaption(ctx, W, vidH, barPx, canvasH, text, stArg, hPos) {
   const st = stArg || settings();
   const fp = fontPx(vidH, st), lh = Math.round(fp * 1.25);
   const display = st.caps ? text.toUpperCase() : text;
-  ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
   ctx.font = `${fp}px ${st.font}`;
-  const lines = wrapText(ctx, display, W * 0.94);
-  const cx = W / 2;
+  const marginPx = Math.round(vidH * (st.marginPct ?? 3.5) / 100);
+  const box = horizontalBox(W, marginPx, hPos);
+  ctx.textAlign = box.align;
+  const lines = wrapText(ctx, display, box.wrapW);
+  const cx = box.cx;
 
   if (st.style === "classic") {
-    const margin = Math.round(vidH * 0.035);
     const videoTop = (barPx && st.position === "top") ? barPx : 0; // barPx is 0 for classic
     let yStart;
-    if (st.position === "top") yStart = videoTop + margin + fp;
-    else yStart = videoTop + vidH - margin - (lines.length - 1) * lh;
+    if (st.position === "top") yStart = videoTop + marginPx + fp;
+    else yStart = videoTop + vidH - marginPx - (lines.length - 1) * lh;
     ctx.lineJoin = "round";
     const lw = fp * st.strokePct / 100 * 2; // 0 → honor "no outline"
     ctx.lineWidth = Math.max(lw > 0 ? 1 : 0, lw);
@@ -902,7 +923,7 @@ function drawPreview() {
   }
   pctx.drawImage(video, (W - dw) / 2, videoY + (vidH - dh) / 2, dw, dh);
   for (const q of activeCues(video.currentTime)) {
-    drawCaption(pctx, W, vidH, barPx, canvasH, q.text);
+    drawCaption(pctx, W, vidH, barPx, canvasH, q.text, st, q.pos);
   }
 }
 
@@ -923,13 +944,21 @@ function renderCueList() {
     });
     const inp = document.createElement("input"); inp.type = "text"; inp.value = q.text;
     inp.addEventListener("input", () => { q.text = inp.value; });
+    const posSel = document.createElement("select"); posSel.className = "cuePos";
+    posSel.title = "horizontal position — for two speakers on screen, or an off-center face";
+    [["left", "L"], ["center", "C"], ["right", "R"]].forEach(([v, label]) => {
+      const o = document.createElement("option"); o.value = v; o.textContent = label;
+      posSel.appendChild(o);
+    });
+    posSel.value = q.pos || "center";
+    posSel.addEventListener("change", () => { q.pos = posSel.value; });
     if (clips.length > 1) {
       const cbadge = document.createElement("span"); cbadge.className = "clipBadge";
       cbadge.textContent = "C" + (q.clip + 1);
       cbadge.title = "clip this caption is anchored to";
-      row.append(cb, cbadge, t, inp);
+      row.append(cb, cbadge, t, inp, posSel);
     } else {
-      row.append(cb, t, inp);
+      row.append(cb, t, inp, posSel);
     }
     el.appendChild(row);
   });
@@ -1043,6 +1072,7 @@ function renderPlatforms(bytes) {
 $("style").addEventListener("change", () => { $("barColorRow").style.display = $("style").value === "bar" ? "" : "none"; });
 $("fontSize").addEventListener("input", () => $("fontSizeLabel").textContent = $("fontSize").value + "%");
 $("stroke").addEventListener("input", () => $("strokeLabel").textContent = $("stroke").value + "%");
+$("margin").addEventListener("input", () => $("marginLabel").textContent = $("margin").value + "%");
 $("quality").addEventListener("input", () => $("qualityLabel").textContent = $("quality").value);
 
 /* ---------- conversion ---------- */
@@ -1050,11 +1080,11 @@ function updateConvertEnabled() {
   $("convert").disabled = !(clips.length && CONFIG && CONFIG.gifskiPresent);
 }
 
-async function renderCuePNG(W, vidH, barPx, canvasH, text, st) {
+async function renderCuePNG(W, vidH, barPx, canvasH, text, st, hPos) {
   const cv = document.createElement("canvas");
   cv.width = W; cv.height = canvasH;
   const ctx = cv.getContext("2d");
-  drawCaption(ctx, W, vidH, barPx, canvasH, text, st);
+  drawCaption(ctx, W, vidH, barPx, canvasH, text, st, hPos);
   const blob = await new Promise(res => cv.toBlob(res, "image/png"));
   if (!blob) throw new Error("caption too large to render — reduce width or font size");
   return blob;
@@ -1088,14 +1118,14 @@ $("convert").addEventListener("click", async () => {
     for (const q of cues) {
       if (!q.enabled || !q.text.trim()) continue;
       const m = mapCueOut(q, offs);
-      if (m && m.end > m.start) active.push({ start: m.start, end: m.end, text: q.text });
+      if (m && m.end > m.start) active.push({ start: m.start, end: m.end, text: q.text, pos: q.pos });
     }
     active.sort((a, b) => a.start - b.start);
 
     const fd = new FormData();
     const cueMeta = [];
     for (let i = 0; i < active.length; i++) {
-      const blob = await renderCuePNG(W, vidH, barPx, canvasH, active[i].text, st);
+      const blob = await renderCuePNG(W, vidH, barPx, canvasH, active[i].text, st, active[i].pos);
       fd.append("cue_" + i, blob, "cue_" + i + ".png");
       cueMeta.push({ start: active[i].start, end: active[i].end });
     }
@@ -1618,7 +1648,7 @@ $("importBtn").addEventListener("click", () => {
     if (!clips[c.clip]) { orphaned++; continue; }
     let text = (c.script.trim() || c.text.trim()).replace(/\s*\n\s*/g, " ");
     if (text.length > MAX_IMPORT_CHARS) { text = text.slice(0, MAX_IMPORT_CHARS); clipped++; }
-    imported.push({ clip: c.clip, start: c.start, end: c.end, text, enabled: true });
+    imported.push({ clip: c.clip, start: c.start, end: c.end, text, enabled: true, pos: "center" });
   }
   cues = imported;
   renderCueList();
